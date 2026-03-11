@@ -1,0 +1,353 @@
+// Pi agent integration layer for Pi-Tainá
+// Manages per-user agent sessions and registers Tainá's custom tools with the Pi SDK.
+
+import { Type } from "@sinclair/typebox";
+import {
+  AuthStorage,
+  createAgentSession,
+  ModelRegistry,
+  SessionManager,
+  type AgentSession,
+  type ToolDefinition,
+} from "@mariozechner/pi-coding-agent";
+import { loadEnvConfig, type EnvConfig } from "./env.js";
+import type { IncomingMessage } from "./telegram.js";
+import { identifySpecies } from "./tools/identify-species.js";
+import { publishOccurrence, type TelegramUser } from "./tools/publish-occurrence.js";
+import { geocodeLocation } from "./tools/geocode-location.js";
+
+// ─── Per-session state ────────────────────────────────────────────────────────
+
+interface SessionState {
+  session: AgentSession;
+  latestPhoto?: {
+    data: Buffer;
+    mimeType: string;
+  };
+  currentUser?: TelegramUser;
+}
+
+// ─── Module-level singletons ──────────────────────────────────────────────────
+
+// Sessions keyed by Telegram user ID
+const sessions = new Map<number, SessionState>();
+
+// Lazily initialized config, authStorage, modelRegistry
+let _config: EnvConfig | null = null;
+let _authStorage: AuthStorage | null = null;
+let _modelRegistry: ModelRegistry | null = null;
+
+function getConfig(): EnvConfig {
+  if (!_config) {
+    _config = loadEnvConfig();
+  }
+  return _config;
+}
+
+function getAuthStorage(): AuthStorage {
+  if (!_authStorage) {
+    const config = getConfig();
+    _authStorage = AuthStorage.create();
+    // Set Google Gemini as the default provider (required)
+    _authStorage.setRuntimeApiKey("google", config.geminiApiKey);
+    // Set optional providers if configured
+    if (config.anthropicApiKey) {
+      _authStorage.setRuntimeApiKey("anthropic", config.anthropicApiKey);
+    }
+    if (config.openaiApiKey) {
+      _authStorage.setRuntimeApiKey("openai", config.openaiApiKey);
+    }
+  }
+  return _authStorage;
+}
+
+function getModelRegistry(): ModelRegistry {
+  if (!_modelRegistry) {
+    _modelRegistry = new ModelRegistry(getAuthStorage());
+  }
+  return _modelRegistry;
+}
+
+// ─── Custom tool definitions ──────────────────────────────────────────────────
+
+// Schema definitions for custom tools
+const identifySpeciesSchema = Type.Object({
+  userContext: Type.Optional(
+    Type.String({
+      description: "Optional additional context from the user (location, habitat, behavior, etc.)",
+    })
+  ),
+});
+
+const publishOccurrenceSchema = Type.Object({
+  scientificName: Type.String({ description: "Scientific name of the species" }),
+  vernacularName: Type.Optional(Type.String({ description: "Common/vernacular name" })),
+  decimalLatitude: Type.Optional(Type.Number({ description: "GPS latitude" })),
+  decimalLongitude: Type.Optional(Type.Number({ description: "GPS longitude" })),
+  locality: Type.Optional(Type.String({ description: "Text description of the location" })),
+  country: Type.Optional(Type.String({ description: "Country name" })),
+  countryCode: Type.Optional(Type.String({ description: "ISO 3166-1 alpha-2 country code" })),
+  habitat: Type.Optional(Type.String({ description: "Habitat description" })),
+  behavior: Type.Optional(Type.String({ description: "Observed behavior" })),
+  individualCount: Type.Optional(Type.Number({ description: "Number of individuals observed" })),
+  occurrenceRemarks: Type.Optional(Type.String({ description: "Additional remarks about the occurrence" })),
+  eventDate: Type.Optional(Type.String({ description: "Date of observation in ISO 8601 format" })),
+});
+
+const geocodeLocationSchema = Type.Object({
+  query: Type.String({ description: "Location name or description to geocode" }),
+  countryCode: Type.Optional(
+    Type.String({ description: "ISO 3166-1 alpha-2 country code to narrow results" })
+  ),
+});
+
+/**
+ * Build the three custom tools for a given session state reference.
+ * The state reference is a mutable object so tools always see the latest photo/user.
+ */
+function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
+  const config = getConfig();
+
+  const identifySpeciesTool: ToolDefinition<typeof identifySpeciesSchema> = {
+    name: "identify_species",
+    label: "Identify Species",
+    description:
+      "Identify a species from a photo that the user sent. Call this when the user sends a photo of a plant, animal, fungus, or other organism.",
+    parameters: identifySpeciesSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const photo = stateRef.state.latestPhoto;
+      if (!photo) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: "No photo available",
+                suggestion: "Ask the user to send a photo first",
+              }),
+            },
+          ],
+          details: {},
+        };
+      }
+
+      const imageData = photo.data.toString("base64");
+      const result = await identifySpecies(
+        imageData,
+        photo.mimeType,
+        config.geminiApiKey,
+        config.speciesIdModel,
+        params.userContext
+      );
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
+  const publishOccurrenceTool: ToolDefinition<typeof publishOccurrenceSchema> = {
+    name: "publish_occurrence",
+    label: "Publish Occurrence",
+    description:
+      "Publish a biodiversity occurrence record to the community ATProto PDS. Use after identifying a species when the user confirms they want to publish.",
+    parameters: publishOccurrenceSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const photo = stateRef.state.latestPhoto;
+      const user = stateRef.state.currentUser;
+
+      if (!user) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ success: false, error: "No user context available" }),
+            },
+          ],
+          details: {},
+        };
+      }
+
+      const result = await publishOccurrence({
+        scientificName: params.scientificName,
+        vernacularName: params.vernacularName,
+        decimalLatitude: params.decimalLatitude,
+        decimalLongitude: params.decimalLongitude,
+        locality: params.locality,
+        country: params.country,
+        countryCode: params.countryCode,
+        habitat: params.habitat,
+        behavior: params.behavior,
+        individualCount: params.individualCount,
+        occurrenceRemarks: params.occurrenceRemarks,
+        eventDate: params.eventDate,
+        imageData: photo?.data,
+        imageMimeType: photo?.mimeType,
+        submittedBy: user,
+      });
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
+  const geocodeLocationTool: ToolDefinition<typeof geocodeLocationSchema> = {
+    name: "geocode_location",
+    label: "Geocode Location",
+    description:
+      "Convert a text location description to GPS coordinates. Use when the user provides a place name instead of GPS coordinates.",
+    parameters: geocodeLocationSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const result = await geocodeLocation(params.query, params.countryCode);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
+  return [
+    identifySpeciesTool as unknown as ToolDefinition,
+    publishOccurrenceTool as unknown as ToolDefinition,
+    geocodeLocationTool as unknown as ToolDefinition,
+  ];
+}
+
+// ─── Session management ───────────────────────────────────────────────────────
+
+/**
+ * Get or create a Pi agent session for a Telegram user.
+ * Sessions are keyed by Telegram user ID and persisted to disk.
+ */
+export async function getOrCreateSession(userId: number): Promise<AgentSession> {
+  const existing = sessions.get(userId);
+  if (existing) {
+    return existing.session;
+  }
+
+  const config = getConfig();
+  const authStorage = getAuthStorage();
+  const modelRegistry = getModelRegistry();
+
+  // Create a mutable state reference so tools can always access the latest photo/user
+  const stateRef: { state: SessionState } = {
+    state: {
+      session: null as unknown as AgentSession, // will be set below
+    },
+  };
+
+  const customTools = buildCustomTools(stateRef);
+
+  // Parse provider and model ID from config.piModel (format: "provider/model-id")
+  const [provider, ...modelParts] = config.piModel.split("/");
+  const modelId = modelParts.join("/");
+
+  let model = modelRegistry.find(provider, modelId);
+  if (!model) {
+    // Fall back to first available model
+    const available = modelRegistry.getAvailable();
+    model = available[0];
+  }
+
+  const sessionDir = `./data/sessions/${userId}`;
+
+  const { session } = await createAgentSession({
+    authStorage,
+    modelRegistry,
+    model: model ?? undefined,
+    sessionManager: SessionManager.create(sessionDir),
+    customTools,
+    cwd: process.cwd(),
+  });
+
+  const sessionState: SessionState = {
+    session,
+  };
+
+  // Point the stateRef at the real state object
+  stateRef.state = sessionState;
+
+  sessions.set(userId, sessionState);
+
+  return session;
+}
+
+// ─── Message sending ──────────────────────────────────────────────────────────
+
+/**
+ * Send a message to the agent and collect the full text response.
+ * Handles text messages, photo context, and location context.
+ */
+export async function sendToAgent(msg: IncomingMessage): Promise<string> {
+  const session = await getOrCreateSession(msg.user.id);
+
+  // Update per-session state with latest photo and user info
+  const sessionState = sessions.get(msg.user.id)!;
+  sessionState.currentUser = {
+    id: msg.user.id,
+    username: msg.user.username,
+    displayName: msg.user.displayName,
+  };
+
+  if (msg.photo) {
+    sessionState.latestPhoto = {
+      data: msg.photo.data,
+      mimeType: msg.photo.mimeType,
+    };
+  }
+
+  // Build the prompt text
+  const userContext = `Message from ${msg.user.displayName} (Telegram user ID: ${msg.user.id})`;
+  let promptText: string;
+
+  if (msg.photo) {
+    const userText = msg.text ? ` ${msg.text}` : "";
+    promptText = `${userContext}\nThe user sent a photo. [Photo is available for analysis].${userText}`;
+  } else if (msg.location) {
+    const { latitude, longitude } = msg.location;
+    const userText = msg.text ? ` ${msg.text}` : "";
+    promptText = `${userContext}\nThe user shared their GPS location: latitude ${latitude}, longitude ${longitude}.${userText}`;
+  } else {
+    const text = msg.text ?? "";
+    promptText = `${userContext}\n${text}`;
+  }
+
+  // Collect response text from events
+  let responseText = "";
+
+  const unsubscribe = session.subscribe((event) => {
+    if (
+      event.type === "message_update" &&
+      event.assistantMessageEvent.type === "text_delta"
+    ) {
+      responseText += event.assistantMessageEvent.delta;
+    }
+  });
+
+  try {
+    await session.prompt(promptText);
+  } finally {
+    unsubscribe();
+  }
+
+  return responseText;
+}
+
+// ─── Cleanup ──────────────────────────────────────────────────────────────────
+
+/**
+ * Dispose all active agent sessions.
+ */
+export async function disposeAllSessions(): Promise<void> {
+  for (const [, state] of sessions) {
+    try {
+      state.session.dispose();
+    } catch (err) {
+      console.error("Error disposing session:", err);
+    }
+  }
+  sessions.clear();
+}
