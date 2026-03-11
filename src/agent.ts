@@ -20,10 +20,7 @@ import { geocodeLocation } from "./tools/geocode-location.js";
 
 interface SessionState {
   session: AgentSession;
-  latestPhoto?: {
-    data: Buffer;
-    mimeType: string;
-  };
+  photos: Array<{ data: Buffer; mimeType: string }>;
   currentUser?: TelegramUser;
 }
 
@@ -101,6 +98,8 @@ const geocodeLocationSchema = Type.Object({
   ),
 });
 
+const clearPhotosSchema = Type.Object({});
+
 /**
  * Build the three custom tools for a given session state reference.
  * The state reference is a mutable object so tools always see the latest photo/user.
@@ -115,7 +114,8 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       "Identify a species from a photo that the user sent. Call this when the user sends a photo of a plant, animal, fungus, or other organism.",
     parameters: identifySpeciesSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
-      const photo = stateRef.state.latestPhoto;
+      const photos = stateRef.state.photos;
+      const photo = photos.length > 0 ? photos[photos.length - 1] : undefined;
       if (!photo) {
         return {
           content: [
@@ -154,7 +154,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       "Publish a biodiversity occurrence record to the community ATProto PDS. Use after identifying a species when the user confirms they want to publish.",
     parameters: publishOccurrenceSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
-      const photo = stateRef.state.latestPhoto;
+      const photos = stateRef.state.photos;
       const user = stateRef.state.currentUser;
 
       if (!user) {
@@ -182,10 +182,14 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         individualCount: params.individualCount,
         occurrenceRemarks: params.occurrenceRemarks,
         eventDate: params.eventDate,
-        imageData: photo?.data,
-        imageMimeType: photo?.mimeType,
+        images: photos.length > 0 ? photos : undefined,
         submittedBy: user,
       });
+
+      // Clear photos after a successful publish
+      if (result.success) {
+        stateRef.state.photos = [];
+      }
 
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
@@ -209,10 +213,35 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const clearPhotosTool: ToolDefinition<typeof clearPhotosSchema> = {
+    name: "clear_photos",
+    label: "Clear Photos",
+    description:
+      "Clear all accumulated photos for the current observation. Use when the user wants to start over or discard photos.",
+    parameters: clearPhotosSchema,
+    execute: async (_toolCallId, _params, _signal, _onUpdate, _ctx) => {
+      const count = stateRef.state.photos.length;
+      stateRef.state.photos = [];
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              message: `Cleared ${count} photo(s). Ready for a new observation.`,
+            }),
+          },
+        ],
+        details: {},
+      };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
     geocodeLocationTool as unknown as ToolDefinition,
+    clearPhotosTool as unknown as ToolDefinition,
   ];
 }
 
@@ -232,10 +261,11 @@ export async function getOrCreateSession(userId: number): Promise<AgentSession> 
   const authStorage = getAuthStorage();
   const modelRegistry = getModelRegistry();
 
-  // Create a mutable state reference so tools can always access the latest photo/user
+  // Create a mutable state reference so tools can always access the latest photos/user
   const stateRef: { state: SessionState } = {
     state: {
       session: null as unknown as AgentSession, // will be set below
+      photos: [],
     },
   };
 
@@ -265,6 +295,7 @@ export async function getOrCreateSession(userId: number): Promise<AgentSession> 
 
   const sessionState: SessionState = {
     session,
+    photos: [],
   };
 
   // Point the stateRef at the real state object
@@ -293,10 +324,10 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   };
 
   if (msg.photo) {
-    sessionState.latestPhoto = {
+    sessionState.photos.push({
       data: msg.photo.data,
       mimeType: msg.photo.mimeType,
-    };
+    });
   }
 
   // Build the prompt text
@@ -305,7 +336,7 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
 
   if (msg.photo) {
     const userText = msg.text ? ` ${msg.text}` : "";
-    promptText = `${userContext}\nThe user sent a photo. [Photo is available for analysis].${userText}`;
+    promptText = `${userContext}\nThe user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}`;
   } else if (msg.location) {
     const { latitude, longitude } = msg.location;
     const userText = msg.text ? ` ${msg.text}` : "";

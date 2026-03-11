@@ -30,9 +30,9 @@ export interface OccurrenceInput {
   individualCount?: number;
   occurrenceRemarks?: string;
 
-  // Image (raw bytes, will be uploaded to PDS as blob)
-  imageData?: Buffer;
-  imageMimeType?: string;
+  // Images (raw bytes, will be uploaded to PDS as blobs)
+  // Supports multiple photos from a multi-photo observation session (max 5)
+  images?: Array<{ data: Buffer; mimeType: string }>;
 
   // Who submitted this (Telegram user info)
   submittedBy: TelegramUser;
@@ -47,6 +47,7 @@ export interface PublishResult {
   location: string;
   date: string;
   hasImage: boolean;
+  imageCount: number;
 }
 
 export interface PublishError {
@@ -96,26 +97,26 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
   const communityHandle = getCommunityHandle();
 
   // Build recordedBy string — include all three Telegram user identifiers
+  // Store Telegram info in occurrenceRemarks for attribution, use handle for recordedBy
   const { id, username, displayName } = input.submittedBy;
-  const recordedBy = username
+  const telegramAttribution = username
     ? `${displayName} (@${username}, tg:${id})`
     : `${displayName} (tg:${id})`;
-
-  const recordedByID = `telegram:${id}`;
 
   // Determine event date (default to today)
   const eventDate = input.eventDate ?? new Date().toISOString().split("T")[0];
   const createdAt = new Date().toISOString();
 
   // Build the Darwin Core record
+  // IMPORTANT: decimalLatitude and decimalLongitude MUST be strings per the lexicon schema
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const record: Record<string, any> = {
     $type: "app.gainforest.dwc.occurrence",
     scientificName: input.scientificName,
     basisOfRecord: input.basisOfRecord ?? "HumanObservation",
     occurrenceStatus: "present",
-    recordedBy,
-    recordedByID,
+    recordedBy: telegramAttribution,
+    recordedByID: did,
     rightsHolder: communityHandle,
     eventDate,
     createdAt,
@@ -126,10 +127,10 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
     record.vernacularName = input.vernacularName;
   }
 
-  // Location fields
+  // Location fields — coordinates MUST be strings per ATProto lexicon
   if (hasGps) {
-    record.decimalLatitude = input.decimalLatitude;
-    record.decimalLongitude = input.decimalLongitude;
+    record.decimalLatitude = String(input.decimalLatitude);
+    record.decimalLongitude = String(input.decimalLongitude);
     record.geodeticDatum = "EPSG:4326";
     if (input.coordinateUncertaintyInMeters !== undefined) {
       record.coordinateUncertaintyInMeters = input.coordinateUncertaintyInMeters;
@@ -145,22 +146,32 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
   if (input.individualCount !== undefined) record.individualCount = input.individualCount;
   if (input.occurrenceRemarks) record.occurrenceRemarks = input.occurrenceRemarks;
 
-  // Upload image blob if provided
+  // Upload image blobs if provided (max 5, matching lexicon constraint)
   let hasImage = false;
-  if (input.imageData && input.imageMimeType) {
-    try {
-      const uploadResponse = await agent.uploadBlob(input.imageData, {
-        encoding: input.imageMimeType,
-      });
+  let imageCount = 0;
+  const imagesToUpload = (input.images ?? []).slice(0, 5);
+  if (imagesToUpload.length > 0) {
+    const blobRefs: unknown[] = [];
+    for (const image of imagesToUpload) {
+      try {
+        const uploadResponse = await agent.uploadBlob(image.data, {
+          encoding: image.mimeType,
+        });
 
-      // Serialize through JSON to avoid CID serialization issues (same pattern as taina-v3-2)
-      const blobRef = JSON.parse(JSON.stringify(uploadResponse.data.blob));
+        // Serialize through JSON to avoid CID serialization issues (same pattern as taina-v3-2)
+        const blobRef = JSON.parse(JSON.stringify(uploadResponse.data.blob));
+        blobRefs.push(blobRef);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Image upload failed (continuing with others): ${message}`);
+      }
+    }
 
-      record.imageEvidence = [{ file: blobRef }];
+    if (blobRefs.length > 0) {
+      record.imageEvidence = blobRefs.map((ref) => ({ file: ref }));
+      record.dcType = "StillImage";
       hasImage = true;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { success: false, error: `Image upload failed: ${message}` };
+      imageCount = blobRefs.length;
     }
   }
 
@@ -195,5 +206,6 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
     location,
     date: eventDate,
     hasImage,
+    imageCount,
   };
 }
