@@ -18,6 +18,13 @@ export interface IncomingMessage {
     mimeType: string; // always "image/jpeg" from Telegram
     fileId: string;
   };
+  // Voice note data (if user sent a voice message)
+  voice?: {
+    data: Buffer;
+    mimeType: string;  // "audio/ogg" for Telegram voice notes
+    duration: number;  // duration in seconds
+    fileId: string;
+  };
   // Location (if user sent a Telegram location)
   location?: {
     latitude: number;
@@ -157,10 +164,11 @@ export async function createTelegramBot(
 
       const hasPhoto = !!(msg.photo && msg.photo.length > 0);
       const hasLocation = !!(msg.location || msg.venue);
+      const hasVoice = !!(msg.voice);
 
       // ── Group filtering ────────────────────────────────────────────────────
-      // In groups, only forward if @mentioned, photo sent, or location sent
-      if (isGroup && !isMentioned && !hasPhoto && !hasLocation) {
+      // In groups, only forward if @mentioned, photo sent, location sent, or voice sent
+      if (isGroup && !isMentioned && !hasPhoto && !hasLocation && !hasVoice) {
         return;
       }
 
@@ -201,6 +209,26 @@ export async function createTelegramBot(
         } catch (err) {
           console.error("Failed to download photo:", err);
           // Continue without photo data — don't block the message
+        }
+      }
+
+      // ── Voice handling ───────────────────────────────────────────────────
+      if (hasVoice && msg.voice) {
+        try {
+          const voiceData = await downloadTelegramFile(
+            bot,
+            msg.voice.file_id,
+            token
+          );
+          incoming.voice = {
+            data: voiceData,
+            mimeType: "audio/ogg",
+            duration: msg.voice.duration,
+            fileId: msg.voice.file_id,
+          };
+        } catch (err) {
+          console.error("Failed to download voice note:", err);
+          // Continue without voice data
         }
       }
 
