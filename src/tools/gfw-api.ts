@@ -148,7 +148,8 @@ export async function createGeostore(
 
 export async function getTreeCoverLoss(
   apiKey: string,
-  geostoreHash: string
+  geostoreHash: string,
+  geostoreOrigin: string = "rw"
 ): Promise<TreeCoverResult | GfwError> {
   const sql =
     "SELECT umd_tree_cover_loss__year, SUM(area__ha) as loss_ha FROM results WHERE umd_tree_cover_density_2000__threshold >= 30 GROUP BY umd_tree_cover_loss__year ORDER BY umd_tree_cover_loss__year";
@@ -156,7 +157,7 @@ export async function getTreeCoverLoss(
   const params = new URLSearchParams({
     sql,
     geostore_id: geostoreHash,
-    geostore_origin: "rw",
+    geostore_origin: geostoreOrigin,
   });
 
   const url = `https://data-api.globalforestwatch.org/dataset/umd_tree_cover_loss/latest/query/json?${params.toString()}`;
@@ -273,7 +274,8 @@ export async function getTreeCoverExtent(
 export async function getFireAlerts(
   apiKey: string,
   geostoreHash: string,
-  days: number = 7
+  days: number = 7,
+  geostoreOrigin: string = "rw"
 ): Promise<FireAlertResult | GfwError> {
   const endDate = new Date();
   const startDate = new Date();
@@ -287,7 +289,7 @@ export async function getFireAlerts(
   const params = new URLSearchParams({
     sql,
     geostore_id: geostoreHash,
-    geostore_origin: "rw",
+    geostore_origin: geostoreOrigin,
   });
 
   const url = `https://data-api.globalforestwatch.org/dataset/nasa_viirs_fire_alerts/latest/query/json?${params.toString()}`;
@@ -345,7 +347,8 @@ export async function getFireAlerts(
 export async function getDeforestationAlerts(
   apiKey: string,
   geostoreHash: string,
-  days: number = 30
+  days: number = 30,
+  geostoreOrigin: string = "rw"
 ): Promise<DeforestationAlertResult | GfwError> {
   const endDate = new Date();
   const startDate = new Date();
@@ -359,7 +362,7 @@ export async function getDeforestationAlerts(
   const params = new URLSearchParams({
     sql,
     geostore_id: geostoreHash,
-    geostore_origin: "rw",
+    geostore_origin: geostoreOrigin,
   });
 
   const url = `https://data-api.globalforestwatch.org/dataset/gfw_integrated_alerts/latest/query/json?${params.toString()}`;

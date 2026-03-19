@@ -15,7 +15,7 @@ import type { IncomingMessage } from "./telegram.js";
 import { identifySpecies } from "./tools/identify-species.js";
 import { publishOccurrence, type TelegramUser } from "./tools/publish-occurrence.js";
 import { geocodeLocation } from "./tools/geocode-location.js";
-import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts } from "./tools/gfw-api.js";
+import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts, reverseGeocodeAdmin } from "./tools/gfw-api.js";
 import { generateTreeCoverLossChart, buildGfwMapUrl } from "./tools/gfw-chart.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ const clearPhotosSchema = Type.Object({});
 const forestReportSchema = Type.Object({
   latitude: Type.Number({ description: "GPS latitude of the location to analyze" }),
   longitude: Type.Number({ description: "GPS longitude of the location to analyze" }),
-  radiusKm: Type.Optional(Type.Number({ description: "Radius in km around the point to analyze. Default 10." })),
+  radiusKm: Type.Optional(Type.Number({ description: "Fallback radius in km if admin boundary lookup fails. Default 10. Usually not needed — the tool automatically uses the municipality boundary." })),
 });
 
 /**
@@ -265,37 +265,69 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         };
       }
 
-      const geostore = await createGeostore(params.latitude, params.longitude, params.radiusKm ?? 10);
-      if ("error" in geostore) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify(geostore),
-            },
-          ],
-          details: {},
-        };
+      // Step 1: Reverse geocode to admin boundaries
+      const adminResult = await reverseGeocodeAdmin(config.gfwDataApiKey, params.latitude, params.longitude);
+
+      let geostoreId: string;
+      let geostoreOrigin: string;
+      let areaName: string;
+      let areaHa: number;
+      let treeCoverExtent: Awaited<ReturnType<typeof getTreeCoverExtent>> | undefined;
+
+      if (!("error" in adminResult) && adminResult.boundaries.length > 0) {
+        // Use municipality if available, else state, else country
+        const boundary = adminResult.municipality || adminResult.state || adminResult.country!;
+        geostoreId = boundary.geostoreId;
+        geostoreOrigin = "gfw";
+        areaName = boundary.municipality
+          ? `${boundary.municipality}, ${boundary.state || boundary.country}`
+          : boundary.state
+          ? `${boundary.state}, ${boundary.country}`
+          : boundary.country;
+        areaHa = boundary.areaHa;
+        // Skip getTreeCoverExtent for gfw geostores (only works with RW geostores)
+        treeCoverExtent = undefined;
+      } else {
+        // Fallback: radius-based bounding box
+        const geostore = await createGeostore(params.latitude, params.longitude, params.radiusKm ?? 10);
+        if ("error" in geostore) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(geostore) }],
+            details: {},
+          };
+        }
+        geostoreId = geostore.hash;
+        geostoreOrigin = "rw";
+        areaName = `${params.radiusKm ?? 10}km radius`;
+        areaHa = geostore.areaHa;
+        treeCoverExtent = await getTreeCoverExtent(geostoreId);
       }
 
-      const [treeCoverExtent, treeCoverLoss, fireAlerts, deforestationAlerts] = await Promise.all([
-        getTreeCoverExtent(geostore.hash),
-        getTreeCoverLoss(config.gfwDataApiKey, geostore.hash),
-        getFireAlerts(config.gfwDataApiKey, geostore.hash, 7),
-        getDeforestationAlerts(config.gfwDataApiKey, geostore.hash, 30),
+      // Step 2: Query in parallel
+      const [treeCoverLoss, fireAlerts, deforestationAlerts] = await Promise.all([
+        getTreeCoverLoss(config.gfwDataApiKey, geostoreId, geostoreOrigin),
+        getFireAlerts(config.gfwDataApiKey, geostoreId, 7, geostoreOrigin),
+        getDeforestationAlerts(config.gfwDataApiKey, geostoreId, 30, geostoreOrigin),
       ]);
+
+      // Step 3: Build GFW map URL
+      const mapUrl = buildGfwMapUrl(params.latitude, params.longitude);
 
       // Generate chart image (best-effort, non-blocking)
       let chartImage: Buffer | null = null;
       if ("years" in treeCoverLoss && treeCoverLoss.years) {
-        chartImage = await generateTreeCoverLossChart(treeCoverLoss.years);
+        chartImage = await generateTreeCoverLossChart(treeCoverLoss.years, `${areaName} — Tree Cover Loss`);
       }
 
-      // Build GFW map URL
-      const mapUrl = buildGfwMapUrl(params.latitude, params.longitude);
+      // Store chart for Telegram layer to send as photo
+      if (chartImage) {
+        stateRef.state.pendingChart = chartImage;
+      }
 
       const result = {
-        geostore,
+        areaName,
+        areaHa,
+        adminBoundaries: !("error" in adminResult) ? adminResult : undefined,
         treeCoverExtent,
         treeCoverLoss,
         fireAlerts,
@@ -303,11 +335,6 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         mapUrl,
         hasChart: chartImage !== null,
       };
-
-      // Store chart for Telegram layer to send as photo
-      if (chartImage) {
-        stateRef.state.pendingChart = chartImage;
-      }
 
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
