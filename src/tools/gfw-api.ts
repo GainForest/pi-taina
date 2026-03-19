@@ -27,6 +27,32 @@ export interface GfwError {
   error: string;
 }
 
+export interface FireAlert {
+  date: string;
+  confidence: string;
+  count: number;
+}
+
+export interface FireAlertResult {
+  success: true;
+  alerts: FireAlert[];
+  totalFires: number;
+  period: string;
+}
+
+export interface DeforestationAlert {
+  date: string;
+  confidence: string;
+  areaHa: number;
+}
+
+export interface DeforestationAlertResult {
+  success: true;
+  alerts: DeforestationAlert[];
+  totalAreaHa: number;
+  period: string;
+}
+
 const USER_AGENT = "Pi-Taina/1.0 (biodiversity-bot)";
 
 export async function createGeostore(
@@ -221,5 +247,155 @@ export async function getTreeCoverExtent(
     treeExtent2010Ha: attrs.treeExtent2010 ?? 0,
     gainHa: attrs.gain ?? 0,
     lossHa: attrs.loss ?? 0,
+  };
+}
+
+export async function getFireAlerts(
+  apiKey: string,
+  geostoreHash: string,
+  days: number = 7
+): Promise<FireAlertResult | GfwError> {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+
+  const startDateStr = startDate.toISOString().slice(0, 10);
+  const endDateStr = endDate.toISOString().slice(0, 10);
+
+  const sql = `SELECT alert__date, confidence__cat, SUM(alert__count) as fires FROM results WHERE alert__date >= '${startDateStr}' GROUP BY alert__date, confidence__cat ORDER BY alert__date DESC LIMIT 100`;
+
+  const params = new URLSearchParams({
+    sql,
+    geostore_id: geostoreHash,
+    geostore_origin: "rw",
+  });
+
+  const url = `https://data-api.globalforestwatch.org/dataset/nasa_viirs_fire_alerts/latest/query/json?${params.toString()}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "x-api-key": apiKey,
+        "User-Agent": USER_AGENT,
+      },
+      redirect: "follow",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Network error: ${message}` };
+  }
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: `GFW Data API returned HTTP ${response.status}: ${response.statusText}`,
+    };
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to parse fire alerts response: ${message}` };
+  }
+
+  const d = data as { data?: Array<{ alert__date?: string; confidence__cat?: string; fires?: number }> };
+  if (!Array.isArray(d?.data)) {
+    return { success: false, error: "Unexpected fire alerts response shape" };
+  }
+
+  const alerts: FireAlert[] = d.data.map((row) => ({
+    date: row.alert__date ?? "",
+    confidence: row.confidence__cat ?? "",
+    count: row.fires ?? 0,
+  }));
+
+  const totalFires = alerts.reduce((sum, a) => sum + a.count, 0);
+
+  return {
+    success: true,
+    alerts,
+    totalFires,
+    period: `${startDateStr} to ${endDateStr}`,
+  };
+}
+
+export async function getDeforestationAlerts(
+  apiKey: string,
+  geostoreHash: string,
+  days: number = 30
+): Promise<DeforestationAlertResult | GfwError> {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days);
+
+  const startDateStr = startDate.toISOString().slice(0, 10);
+  const endDateStr = endDate.toISOString().slice(0, 10);
+
+  const sql = `SELECT gfw_integrated_alerts__date, gfw_integrated_alerts__confidence, SUM(area__ha) as area_ha FROM results WHERE gfw_integrated_alerts__date >= '${startDateStr}' GROUP BY gfw_integrated_alerts__date, gfw_integrated_alerts__confidence ORDER BY gfw_integrated_alerts__date DESC LIMIT 100`;
+
+  const params = new URLSearchParams({
+    sql,
+    geostore_id: geostoreHash,
+    geostore_origin: "rw",
+  });
+
+  const url = `https://data-api.globalforestwatch.org/dataset/gfw_integrated_alerts/latest/query/json?${params.toString()}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "x-api-key": apiKey,
+        "User-Agent": USER_AGENT,
+      },
+      redirect: "follow",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Network error: ${message}` };
+  }
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: `GFW Data API returned HTTP ${response.status}: ${response.statusText}`,
+    };
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to parse deforestation alerts response: ${message}` };
+  }
+
+  const d = data as {
+    data?: Array<{
+      gfw_integrated_alerts__date?: string;
+      gfw_integrated_alerts__confidence?: string;
+      area_ha?: number;
+    }>;
+  };
+  if (!Array.isArray(d?.data)) {
+    return { success: false, error: "Unexpected deforestation alerts response shape" };
+  }
+
+  const alerts: DeforestationAlert[] = d.data.map((row) => ({
+    date: row.gfw_integrated_alerts__date ?? "",
+    confidence: row.gfw_integrated_alerts__confidence ?? "",
+    areaHa: row.area_ha ?? 0,
+  }));
+
+  const totalAreaHa = alerts.reduce((sum, a) => sum + a.areaHa, 0);
+
+  return {
+    success: true,
+    alerts,
+    totalAreaHa,
+    period: `${startDateStr} to ${endDateStr}`,
   };
 }
