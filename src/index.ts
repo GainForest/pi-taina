@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { loadEnvConfig, isAtprotoConfigured } from "./env.js";
+import { loadEnvConfig, isAtprotoConfigured, isGfwConfigured } from "./env.js";
 import { createTelegramBot } from "./telegram.js";
 import { sendToAgent, disposeAllSessions } from "./agent.js";
 import { getAtprotoAgent } from "./atproto.js";
@@ -27,6 +27,14 @@ async function main() {
   } else {
     console.warn("⚠️  ATProto not configured (ATPROTO_HANDLE / ATPROTO_PASSWORD missing)");
     console.warn("   Observation publishing will be unavailable");
+  }
+
+  // 2b. Check GFW Data API (optional — warn if not configured)
+  if (isGfwConfigured(config)) {
+    console.log("✅ GFW Data API configured — forest monitoring enabled");
+  } else {
+    console.warn("⚠️  GFW Data API not configured (GFW_DATA_API_KEY missing)");
+    console.warn("   Forest monitoring features will be unavailable");
   }
 
   // 3. Start Telegram bot
