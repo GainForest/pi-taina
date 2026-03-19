@@ -2,7 +2,9 @@ const USER_AGENT = "Pi-Taina/1.0 (biodiversity-bot)";
 
 export async function generateTreeCoverLossChart(
   years: Array<{ year: number; lossHa: number }>,
-  title?: string
+  title?: string,
+  axisLabelY?: string,
+  axisLabelX?: string,
 ): Promise<Buffer | null> {
   // Filter out zero-loss years
   const filtered = years.filter((y) => y.lossHa > 0);
@@ -40,12 +42,12 @@ export async function generateTreeCoverLossChart(
         yAxes: [
           {
             ticks: { beginAtZero: true },
-            scaleLabel: { display: true, labelString: "Hectares" },
+            scaleLabel: { display: true, labelString: axisLabelY ?? "Hectares" },
           },
         ],
         xAxes: [
           {
-            scaleLabel: { display: true, labelString: "Year" },
+            scaleLabel: { display: true, labelString: axisLabelX ?? "Year" },
           },
         ],
       },

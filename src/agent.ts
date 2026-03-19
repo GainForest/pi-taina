@@ -107,6 +107,9 @@ const forestReportSchema = Type.Object({
   latitude: Type.Number({ description: "GPS latitude of the location to analyze" }),
   longitude: Type.Number({ description: "GPS longitude of the location to analyze" }),
   radiusKm: Type.Optional(Type.Number({ description: "Fallback radius in km if admin boundary lookup fails. Default 10. Usually not needed — the tool automatically uses the municipality boundary." })),
+  chartTitle: Type.Optional(Type.String({ description: "Chart title in the user's language. E.g. 'Texcoco — Pérdida de Bosque' for Spanish. If not provided, defaults to '<area> — Tree Cover Loss'." })),
+  chartAxisY: Type.Optional(Type.String({ description: "Y-axis label for the chart in the user's language. E.g. 'Hectáreas' for Spanish, 'Hectares' for English/Portuguese." })),
+  chartAxisX: Type.Optional(Type.String({ description: "X-axis label for the chart in the user's language. E.g. 'Año' for Spanish, 'Year' for English, 'Ano' for Portuguese." })),
 });
 
 /**
@@ -316,7 +319,13 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       // Generate chart image (best-effort, non-blocking)
       let chartImage: Buffer | null = null;
       if ("years" in treeCoverLoss && treeCoverLoss.years) {
-        chartImage = await generateTreeCoverLossChart(treeCoverLoss.years, `${areaName} — Tree Cover Loss`);
+        const chartTitleText = params.chartTitle || `${areaName} — Tree Cover Loss`;
+        chartImage = await generateTreeCoverLossChart(
+          treeCoverLoss.years,
+          chartTitleText,
+          params.chartAxisY,
+          params.chartAxisX,
+        );
       }
 
       // Store chart for Telegram layer to send as photo
