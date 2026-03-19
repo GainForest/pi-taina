@@ -114,6 +114,7 @@ export async function createTelegramBot(
     }
   ) => Promise<void>;
   sendPhoto: (chatId: number, photo: Buffer, caption?: string) => Promise<void>;
+  sendTyping: (chatId: number) => Promise<void>;
   stop: () => void;
 }> {
   const token = config.telegramBotToken;
@@ -250,17 +251,31 @@ export async function createTelegramBot(
       parseMode?: "HTML" | "Markdown" | "MarkdownV2";
     }
   ): Promise<void> => {
-    const parseMode = options?.parseMode ?? "HTML";
+    const parseMode = options?.parseMode ?? "Markdown";
     const chunks = splitMessage(text);
     for (let i = 0; i < chunks.length; i++) {
       const isFirst = i === 0;
-      await bot.api.sendMessage(chatId, chunks[i], {
-        parse_mode: parseMode,
-        reply_parameters:
-          isFirst && options?.replyToMessageId !== undefined
-            ? { message_id: options.replyToMessageId }
-            : undefined,
-      });
+      try {
+        await bot.api.sendMessage(chatId, chunks[i], {
+          parse_mode: parseMode,
+          reply_parameters:
+            isFirst && options?.replyToMessageId !== undefined
+              ? { message_id: options.replyToMessageId }
+              : undefined,
+        });
+      } catch (err) {
+        // Markdown parsing failed — send as plain text
+        console.warn(
+          "Failed to send with parse_mode, retrying as plain text:",
+          err instanceof Error ? err.message : err
+        );
+        await bot.api.sendMessage(chatId, chunks[i], {
+          reply_parameters:
+            isFirst && options?.replyToMessageId !== undefined
+              ? { message_id: options.replyToMessageId }
+              : undefined,
+        });
+      }
     }
   };
 
