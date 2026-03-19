@@ -15,6 +15,7 @@ import type { IncomingMessage } from "./telegram.js";
 import { identifySpecies } from "./tools/identify-species.js";
 import { publishOccurrence, type TelegramUser } from "./tools/publish-occurrence.js";
 import { geocodeLocation } from "./tools/geocode-location.js";
+import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts } from "./tools/gfw-api.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -99,6 +100,12 @@ const geocodeLocationSchema = Type.Object({
 });
 
 const clearPhotosSchema = Type.Object({});
+
+const forestReportSchema = Type.Object({
+  latitude: Type.Number({ description: "GPS latitude of the location to analyze" }),
+  longitude: Type.Number({ description: "GPS longitude of the location to analyze" }),
+  radiusKm: Type.Optional(Type.Number({ description: "Radius in km around the point to analyze. Default 10." })),
+});
 
 /**
  * Build the three custom tools for a given session state reference.
@@ -237,11 +244,66 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const forestReportTool: ToolDefinition<typeof forestReportSchema> = {
+    name: "forest_report",
+    label: "Forest Report",
+    description:
+      "Get a forest health report for a location: tree cover extent, historical loss/gain, and recent deforestation and fire alerts. Use when the user asks about forest health, deforestation, tree cover, or fires near a location.",
+    parameters: forestReportSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      if (!config.gfwDataApiKey) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ success: false, error: "GFW not configured" }),
+            },
+          ],
+          details: {},
+        };
+      }
+
+      const geostore = await createGeostore(params.latitude, params.longitude, params.radiusKm ?? 10);
+      if ("error" in geostore) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify(geostore),
+            },
+          ],
+          details: {},
+        };
+      }
+
+      const [treeCoverExtent, treeCoverLoss, fireAlerts, deforestationAlerts] = await Promise.all([
+        getTreeCoverExtent(geostore.hash),
+        getTreeCoverLoss(config.gfwDataApiKey, geostore.hash),
+        getFireAlerts(config.gfwDataApiKey, geostore.hash, 7),
+        getDeforestationAlerts(config.gfwDataApiKey, geostore.hash, 30),
+      ]);
+
+      const result = {
+        geostore,
+        treeCoverExtent,
+        treeCoverLoss,
+        fireAlerts,
+        deforestationAlerts,
+      };
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
     geocodeLocationTool as unknown as ToolDefinition,
     clearPhotosTool as unknown as ToolDefinition,
+    forestReportTool as unknown as ToolDefinition,
   ];
 }
 
