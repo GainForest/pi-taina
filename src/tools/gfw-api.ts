@@ -53,6 +53,26 @@ export interface DeforestationAlertResult {
   period: string;
 }
 
+export interface AdminBoundary {
+  level: number;           // 0=country, 1=state, 2=municipality
+  name: string;            // "Altamira", "Pará", "Brazil"
+  type: string;            // "Municipality", "State", "Country"
+  geostoreId: string;      // gfw_geostore_id — ready for queries
+  areaHa: number;          // gfw_area__ha
+  country: string;         // always present
+  state?: string;          // name_1 (for level 1 and 2)
+  municipality?: string;   // name_2 (for level 2 only)
+  isoCode: string;         // gid_0 e.g. "BRA", "MEX"
+}
+
+export interface AdminBoundaryResult {
+  success: true;
+  boundaries: AdminBoundary[];  // sorted by level ascending (0, 1, 2)
+  municipality?: AdminBoundary; // convenience: the adm2 boundary if found
+  state?: AdminBoundary;        // convenience: the adm1 boundary if found
+  country?: AdminBoundary;      // convenience: the adm0 boundary if found
+}
+
 const USER_AGENT = "Pi-Taina/1.0 (biodiversity-bot)";
 
 export async function createGeostore(
@@ -398,4 +418,113 @@ export async function getDeforestationAlerts(
     totalAreaHa,
     period: `${startDateStr} to ${endDateStr}`,
   };
+}
+
+export async function reverseGeocodeAdmin(
+  apiKey: string,
+  lat: number,
+  lng: number
+): Promise<AdminBoundaryResult | GfwError> {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lng: String(lng),
+    z: "10",
+  });
+
+  const url = `https://data-api.globalforestwatch.org/dataset/gadm_administrative_boundaries/latest/features?${params.toString()}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: {
+        "x-api-key": apiKey,
+        "User-Agent": USER_AGENT,
+      },
+      redirect: "follow",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Network error: ${message}` };
+  }
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: `GFW Data API returned HTTP ${response.status}: ${response.statusText}`,
+    };
+  }
+
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to parse GADM response: ${message}` };
+  }
+
+  const d = data as {
+    data?: Array<{
+      adm_level?: string;
+      country?: string;
+      name_1?: string;
+      name_2?: string;
+      engtype_2?: string;
+      gfw_geostore_id?: string;
+      gfw_area__ha?: number;
+      gid_0?: string;
+    }>;
+  };
+
+  // Ocean points or points outside GADM coverage: return empty boundaries
+  if (!Array.isArray(d?.data)) {
+    return { success: true, boundaries: [] };
+  }
+
+  const boundaries: AdminBoundary[] = [];
+
+  for (const item of d.data) {
+    // Skip boundaries without a geostore ID
+    if (!item.gfw_geostore_id) continue;
+
+    const level = parseInt(item.adm_level ?? "0", 10);
+    const name = item.name_2 || item.name_1 || item.country || "";
+    const type =
+      level === 2
+        ? item.engtype_2 || "Municipality"
+        : level === 1
+        ? "State"
+        : "Country";
+
+    const boundary: AdminBoundary = {
+      level,
+      name,
+      type,
+      geostoreId: item.gfw_geostore_id,
+      areaHa: item.gfw_area__ha ?? 0,
+      country: item.country ?? "",
+      isoCode: item.gid_0 ?? "",
+    };
+
+    if (item.name_1) boundary.state = item.name_1;
+    if (item.name_2) boundary.municipality = item.name_2;
+
+    boundaries.push(boundary);
+  }
+
+  // Sort by level ascending (0, 1, 2)
+  boundaries.sort((a, b) => a.level - b.level);
+
+  const result: AdminBoundaryResult = {
+    success: true,
+    boundaries,
+  };
+
+  // Set convenience fields
+  for (const b of boundaries) {
+    if (b.level === 0) result.country = b;
+    else if (b.level === 1) result.state = b;
+    else if (b.level === 2) result.municipality = b;
+  }
+
+  return result;
 }
