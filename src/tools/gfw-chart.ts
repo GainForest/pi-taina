@@ -82,3 +82,23 @@ export async function generateTreeCoverLossChart(
     return null;
   }
 }
+
+export function buildGfwMapUrl(lat: number, lng: number, zoom?: number): string {
+  const state = {
+    center: { lat, lng },
+    zoom: zoom ?? 10,
+    canBound: false,
+    datasets: [
+      {
+        dataset: "tree-cover-loss",
+        layers: ["tree-cover-loss"],
+        opacity: 1,
+        visibility: true,
+      },
+    ],
+  };
+
+  const json = JSON.stringify(state);
+  const encoded = Buffer.from(json).toString("base64");
+  return `https://www.globalforestwatch.org/map/global/?map=${encoded}`;
+}
