@@ -43,6 +43,8 @@ export interface SpeciesIdentification {
     | "other";
   recommendedPhotos: string[];
   imageQuality: ImageQuality;
+  isWildlife: boolean;
+  nonWildlifeReason?: string;
 }
 
 export interface IdentificationError {
@@ -77,6 +79,8 @@ Return a JSON object with the following structure (no markdown, just raw JSON):
   "possibleAlternatives": ["Alternative species 1", "Alternative species 2"],
   "organismGroup": "plant | fungus | bird | mammal | insect | reptile | amphibian | marine | other",
   "recommendedPhotos": ["List of recommended photo angles/features for better identification"],
+  "isWildlife": true or false,
+  "nonWildlifeReason": "Only set if isWildlife is false. Explain why (e.g., 'domestic cat', 'human', 'building', 'food', 'pet dog')",
   "imageQuality": {
     "overall": "excellent | good | fair | poor",
     "sharpness": "sharp | slightly_blurry | blurry",
@@ -130,6 +134,18 @@ MARINE ORGANISMS (fish, shells, corals, etc.):
 - For shells: aperture (opening) shape is critical, overall form, something for scale
 - For fish: lateral line, fin count and placement, color pattern
 - Missing: if shell aperture not shown, if fins not visible
+
+WILDLIFE CLASSIFICATION:
+- isWildlife: Set to TRUE for wild organisms observed in nature (wild plants, wild animals, wild fungi, etc.)
+- isWildlife: Set to FALSE for:
+  - Domestic animals (dogs, cats, horses, cattle, chickens, pet birds, aquarium fish, etc.)
+  - Humans or human body parts
+  - Buildings, vehicles, infrastructure, or man-made objects
+  - Food, cooked meals, or processed products
+  - Cultivated ornamental plants in pots or gardens (but wild plants growing naturally ARE wildlife)
+  - Stuffed animals, toys, or artwork depicting animals
+- When isWildlife is false, set nonWildlifeReason to a brief explanation
+- When in doubt (e.g., feral cat, naturalized garden plant), set isWildlife to true — err on the side of inclusion
 
 GENERAL QUALITY TIPS:
 - If organism is too far away, suggest cropping the photo on their phone
@@ -209,6 +225,7 @@ export async function identifySpecies(
         possibleAlternatives: [],
         organismGroup: "other",
         recommendedPhotos: [],
+        isWildlife: true,
         imageQuality: {
           overall: "poor",
           sharpness: "blurry",
