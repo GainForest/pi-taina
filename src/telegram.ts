@@ -289,9 +289,17 @@ export async function createTelegramBot(
     });
   };
 
+  const sendTyping = async (chatId: number): Promise<void> => {
+    try {
+      await bot.api.sendChatAction(chatId, "typing");
+    } catch {
+      // Silently ignore — typing indicator is best-effort
+    }
+  };
+
   const stop = (): void => {
     bot.stop();
   };
 
-  return { reply, sendPhoto, stop };
+  return { reply, sendPhoto, sendTyping, stop };
 }

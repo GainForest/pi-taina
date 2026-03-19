@@ -41,14 +41,21 @@ async function main() {
   console.log("🤖 Starting Tainá Telegram bot...");
   const bot = await createTelegramBot(async (msg) => {
     try {
-      // Process message through Pi agent
-      const response = await sendToAgent(msg);
+      // Show typing indicator while processing
+      await bot.sendTyping(msg.chatId);
+      const typingInterval = setInterval(() => {
+        bot.sendTyping(msg.chatId).catch(() => {});
+      }, 4000);
 
-      // Send response back to Telegram
-      if (response && response.trim()) {
-        await bot.reply(msg.chatId, response, {
-          replyToMessageId: msg.isGroup ? msg.messageId : undefined,
-        });
+      try {
+        const response = await sendToAgent(msg);
+        if (response && response.trim()) {
+          await bot.reply(msg.chatId, response, {
+            replyToMessageId: msg.isGroup ? msg.messageId : undefined,
+          });
+        }
+      } finally {
+        clearInterval(typingInterval);
       }
     } catch (err) {
       console.error("Error processing message:", err);
