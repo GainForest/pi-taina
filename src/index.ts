@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { loadEnvConfig, isAtprotoConfigured, isGfwConfigured } from "./env.js";
 import { createTelegramBot } from "./telegram.js";
-import { sendToAgent, disposeAllSessions } from "./agent.js";
+import { sendToAgent, disposeAllSessions, getPendingChart } from "./agent.js";
 import { getAtprotoAgent } from "./atproto.js";
 
 async function main() {
@@ -53,6 +53,12 @@ async function main() {
           await bot.reply(msg.chatId, response, {
             replyToMessageId: msg.isGroup ? msg.messageId : undefined,
           });
+        }
+
+        // Send pending chart photo if available (best-effort)
+        const pendingChart = getPendingChart(msg.user.id);
+        if (pendingChart) {
+          await bot.sendPhoto(msg.chatId, pendingChart, "📊 Tree Cover Loss — Data: Global Forest Watch");
         }
       } finally {
         clearInterval(typingInterval);

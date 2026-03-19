@@ -16,6 +16,7 @@ import { identifySpecies } from "./tools/identify-species.js";
 import { publishOccurrence, type TelegramUser } from "./tools/publish-occurrence.js";
 import { geocodeLocation } from "./tools/geocode-location.js";
 import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts } from "./tools/gfw-api.js";
+import { generateTreeCoverLossChart, buildGfwMapUrl } from "./tools/gfw-chart.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ interface SessionState {
   session: AgentSession;
   photos: Array<{ data: Buffer; mimeType: string }>;
   currentUser?: TelegramUser;
+  pendingChart?: Buffer;
 }
 
 // ─── Module-level singletons ──────────────────────────────────────────────────
@@ -283,13 +285,29 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         getDeforestationAlerts(config.gfwDataApiKey, geostore.hash, 30),
       ]);
 
+      // Generate chart image (best-effort, non-blocking)
+      let chartImage: Buffer | null = null;
+      if ("years" in treeCoverLoss && treeCoverLoss.years) {
+        chartImage = await generateTreeCoverLossChart(treeCoverLoss.years);
+      }
+
+      // Build GFW map URL
+      const mapUrl = buildGfwMapUrl(params.latitude, params.longitude);
+
       const result = {
         geostore,
         treeCoverExtent,
         treeCoverLoss,
         fireAlerts,
         deforestationAlerts,
+        mapUrl,
+        hasChart: chartImage !== null,
       };
+
+      // Store chart for Telegram layer to send as photo
+      if (chartImage) {
+        stateRef.state.pendingChart = chartImage;
+      }
 
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
@@ -427,6 +445,22 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   }
 
   return responseText;
+}
+
+// ─── Pending chart ────────────────────────────────────────────────────────────
+
+/**
+ * Consume and return the pending chart image for a user (one-time use).
+ * Returns undefined if no chart is pending.
+ */
+export function getPendingChart(userId: number): Buffer | undefined {
+  const state = sessions.get(userId);
+  if (state?.pendingChart) {
+    const chart = state.pendingChart;
+    state.pendingChart = undefined; // consume it
+    return chart;
+  }
+  return undefined;
 }
 
 // ─── Cleanup ──────────────────────────────────────────────────────────────────
