@@ -17,6 +17,7 @@ import { publishOccurrence, type TelegramUser } from "./tools/publish-occurrence
 import { geocodeLocation } from "./tools/geocode-location.js";
 import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts, reverseGeocodeAdmin } from "./tools/gfw-api.js";
 import { generateTreeCoverLossChart, buildGfwMapUrl } from "./tools/gfw-chart.js";
+import { transcribeVoice } from "./tools/transcribe-voice.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -453,6 +454,18 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   if (msg.photo) {
     const userText = msg.text ? ` ${msg.text}` : "";
     promptText = `${userContext}\nThe user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}`;
+  } else if (msg.voice) {
+    const transcription = await transcribeVoice(
+      msg.voice.data,
+      msg.voice.mimeType,
+      getConfig().geminiApiKey
+    );
+    if ("text" in transcription) {
+      promptText = `${userContext}\n[Voice note transcription]: ${transcription.text}`;
+    } else {
+      console.error("Voice transcription failed:", transcription.error);
+      promptText = `${userContext}\n[The user sent a voice note but transcription failed. Let them know you couldn't process it and ask them to type their message instead.]`;
+    }
   } else if (msg.location) {
     const { latitude, longitude } = msg.location;
     const userText = msg.text ? ` ${msg.text}` : "";
