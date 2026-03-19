@@ -18,6 +18,9 @@ export interface EnvConfig {
   // Model overrides
   piModel: string;        // defaults to "google/gemini-2.5-flash"
   speciesIdModel: string; // defaults to "gemini-2.5-flash"
+
+  // GFW Data API (optional — enables forest monitoring features)
+  gfwDataApiKey: string | undefined;
 }
 
 // Validate required env vars and return typed config
@@ -48,6 +51,8 @@ export function loadEnvConfig(): EnvConfig {
 
     piModel: process.env.PI_MODEL || "google/gemini-2.5-flash",
     speciesIdModel: process.env.SPECIES_ID_MODEL || "gemini-2.5-flash",
+
+    gfwDataApiKey: process.env.GFW_DATA_API_KEY || undefined,
   };
 }
 
@@ -55,4 +60,10 @@ export function loadEnvConfig(): EnvConfig {
 // Returns true only if BOTH atprotoHandle AND atprotoPassword are set
 export function isAtprotoConfigured(config: EnvConfig): boolean {
   return config.atprotoHandle !== undefined && config.atprotoPassword !== undefined;
+}
+
+// Check if GFW Data API is configured
+// Returns true if gfwDataApiKey is defined and non-empty
+export function isGfwConfigured(config: EnvConfig): boolean {
+  return config.gfwDataApiKey !== undefined && config.gfwDataApiKey.length > 0;
 }
