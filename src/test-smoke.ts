@@ -268,7 +268,7 @@ async function testHypercert(): Promise<void> {
       title: 'Smoke Test Hypercert',
       shortDescription: 'Automated smoke test — safe to delete',
       description: 'This is a smoke test record created by test-smoke.ts to verify the hypercert creation flow works.',
-      workScope: 'testing, automation',
+      workScope: 'testing, smoke-test, automation',
       submittedBy: { id: 0, username: 'smoke-test', displayName: 'Smoke Test' },
     });
 
@@ -286,8 +286,29 @@ async function testHypercert(): Promise<void> {
     console.log(`   AT URI: ${result.uri}`);
     console.log(`   Hyperscan: ${result.hyperscanUrl}`);
 
-    // Clean up — delete the test record
+    // Verify contributors are present
+    if ('contributorCount' in result && result.contributorCount > 0) {
+      console.log('   Contributors: ' + result.contributorCount);
+    } else {
+      console.log('   ⚠️  No contributorCount in result');
+    }
+
+    // Verify the raw record has contributors
     const rkey = result.uri.split('/').pop()!;
+    const rawRecord = await agent.com.atproto.repo.getRecord({
+      repo: did,
+      collection: 'org.hypercerts.claim.activity',
+      rkey: rkey,
+    });
+    const value = rawRecord.data.value as Record<string, unknown>;
+    const contributors = value.contributors as Array<unknown> | undefined;
+    if (contributors && contributors.length > 0) {
+      console.log('   Raw record contributors: ' + contributors.length);
+    } else {
+      console.log('   ⚠️  No contributors in raw record');
+    }
+
+    // Clean up — delete the test record
     await agent.com.atproto.repo.deleteRecord({
       repo: did,
       collection: 'org.hypercerts.claim.activity',
