@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "test:smoke": "tsx src/test-smoke.ts"
   },
   "dependencies": {
     "@mariozechner/pi-coding-agent": "latest",
