@@ -486,10 +486,17 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
 /**
  * Get or create a Pi agent session for a Telegram user.
  * Sessions are keyed by Telegram user ID and persisted to disk.
+ *
+ * @param isAdmin - When true, the session gets full SDK built-in tools (read, bash, edit, write).
+ *                  When false (default), only custom tools are available — no filesystem/bash access.
+ *
+ * Note: Role changes (member → admin or admin → member) take effect on the next bot restart.
+ * Existing sessions retain the tool set they were created with.
  */
-export async function getOrCreateSession(userId: number): Promise<AgentSession> {
+export async function getOrCreateSession(userId: number, isAdmin: boolean = false): Promise<AgentSession> {
   const existing = sessions.get(userId);
   if (existing) {
+    // Session exists — return it (role changes take effect on next bot restart)
     return existing.session;
   }
 
@@ -527,6 +534,7 @@ export async function getOrCreateSession(userId: number): Promise<AgentSession> 
     sessionManager: SessionManager.create(sessionDir),
     customTools,
     cwd: process.cwd(),
+    tools: isAdmin ? undefined : [],  // admin gets defaults (read,bash,edit,write), members get none
   });
 
   const sessionState: SessionState = {
@@ -549,7 +557,7 @@ export async function getOrCreateSession(userId: number): Promise<AgentSession> 
  * Handles text messages, photo context, and location context.
  */
 export async function sendToAgent(msg: IncomingMessage): Promise<string> {
-  const session = await getOrCreateSession(msg.user.id);
+  const session = await getOrCreateSession(msg.user.id, (msg as any).isAdmin ?? false);
 
   // Update per-session state with latest photo and user info
   const sessionState = sessions.get(msg.user.id)!;
