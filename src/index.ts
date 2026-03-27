@@ -2,7 +2,8 @@ import "dotenv/config";
 import { loadEnvConfig, isAtprotoConfigured, isGfwConfigured } from "./env.js";
 import { createTelegramBot } from "./telegram.js";
 import { sendToAgent, disposeAllSessions, getPendingChart } from "./agent.js";
-import { getAtprotoAgent } from "./atproto.js";
+import { getAtprotoAgent, getCommunityDid } from "./atproto.js";
+import { initOrgContext } from "./hyperindex.js";
 
 async function main() {
   // 1. Validate required env vars and load typed config (fail fast)
@@ -19,6 +20,7 @@ async function main() {
     try {
       await getAtprotoAgent(config);
       console.log("✅ ATProto community account connected");
+      await initOrgContext(getCommunityDid());
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.warn("⚠️  ATProto login failed:", message);

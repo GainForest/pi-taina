@@ -30,6 +30,20 @@ export interface OccurrenceInput {
   individualCount?: number;
   occurrenceRemarks?: string;
 
+  // Taxonomy
+  kingdom?: string;
+  phylum?: string;
+  class_?: string;  // 'class' is reserved in JS
+  order?: string;
+  family?: string;
+  genus?: string;
+  specificEpithet?: string;
+  taxonRank?: string;
+
+  // Extended location
+  stateProvince?: string;
+  municipality?: string;
+
   // Images (raw bytes, will be uploaded to PDS as blobs)
   // Supports multiple photos from a multi-photo observation session (max 5)
   images?: Array<{ data: Buffer; mimeType: string }>;

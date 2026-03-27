@@ -93,6 +93,18 @@ const publishOccurrenceSchema = Type.Object({
   individualCount: Type.Optional(Type.Number({ description: "Number of individuals observed" })),
   occurrenceRemarks: Type.Optional(Type.String({ description: "Additional remarks about the occurrence" })),
   eventDate: Type.Optional(Type.String({ description: "Date of observation in ISO 8601 format" })),
+  // Taxonomy (all optional strings)
+  kingdom: Type.Optional(Type.String({ description: 'Taxonomic kingdom (e.g. Animalia, Plantae, Fungi)' })),
+  phylum: Type.Optional(Type.String({ description: 'Taxonomic phylum (e.g. Chordata, Tracheophyta)' })),
+  class_: Type.Optional(Type.String({ description: 'Taxonomic class (e.g. Aves, Mammalia). Named class_ to avoid JS reserved word.' })),
+  order: Type.Optional(Type.String({ description: 'Taxonomic order (e.g. Passeriformes)' })),
+  family: Type.Optional(Type.String({ description: 'Taxonomic family (e.g. Fringillidae)' })),
+  genus: Type.Optional(Type.String({ description: 'Taxonomic genus' })),
+  specificEpithet: Type.Optional(Type.String({ description: 'Species epithet (second part of binomial name)' })),
+  taxonRank: Type.Optional(Type.String({ description: 'Taxonomic rank: species, genus, family, etc.' })),
+  // Extended location
+  stateProvince: Type.Optional(Type.String({ description: 'State or province name' })),
+  municipality: Type.Optional(Type.String({ description: 'Municipality name' })),
 });
 
 const geocodeLocationSchema = Type.Object({
@@ -195,6 +207,16 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         individualCount: params.individualCount,
         occurrenceRemarks: params.occurrenceRemarks,
         eventDate: params.eventDate,
+        kingdom: params.kingdom,
+        phylum: params.phylum,
+        class_: params.class_,
+        order: params.order,
+        family: params.family,
+        genus: params.genus,
+        specificEpithet: params.specificEpithet,
+        taxonRank: params.taxonRank,
+        stateProvince: params.stateProvince,
+        municipality: params.municipality,
         images: photos.length > 0 ? photos : undefined,
         submittedBy: user,
       });
