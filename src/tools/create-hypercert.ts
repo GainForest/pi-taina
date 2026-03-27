@@ -3,6 +3,7 @@
 
 import { getAtprotoAgent, getCommunityDid } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
+import { getOrgContext } from "../hyperindex.js";
 import type { TelegramUser } from "./publish-occurrence.js";
 
 export type { TelegramUser };
@@ -30,6 +31,7 @@ export interface HypercertResult {
   cid: string;
   title: string;
   hyperscanUrl: string;  // Link to view on Hyperscan
+  contributorCount: number;
 }
 
 export interface HypercertError {
@@ -123,7 +125,12 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
     ...(input.description && { description: input.description }),
     ...(input.startDate && { startDate: input.startDate }),
     ...(input.endDate && { endDate: input.endDate }),
-    ...(input.workScope && { workScope: input.workScope }),
+    ...(input.workScope && {
+      workScope: {
+        $type: 'org.hypercerts.claim.activity#workScopeString',
+        scope: input.workScope,
+      },
+    }),
     ...(imageBlob && {
       image: {
         $type: 'blob',
@@ -134,6 +141,42 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
     }),
     ...(locationRef && { locations: [{ uri: locationRef.uri, cid: locationRef.cid }] }),
   };
+
+  // Always add the submitting user as a contributor
+  const contributors: Array<Record<string, unknown>> = [];
+
+  // Contributor 1: the Telegram user who submitted
+  contributors.push({
+    contributorIdentity: {
+      $type: 'org.hypercerts.claim.activity#contributorIdentity',
+      identity: input.submittedBy.username
+        ? `tg:${input.submittedBy.username}`
+        : `tg:user:${input.submittedBy.id}`,
+    },
+    contributionDetails: {
+      $type: 'org.hypercerts.claim.activity#contributorRole',
+      role: 'submitter',
+    },
+    contributionWeight: '1',
+  });
+
+  // Contributor 2: the community org (if available)
+  const org = getOrgContext();
+  if (org?.displayName) {
+    contributors.push({
+      contributorIdentity: {
+        $type: 'org.hypercerts.claim.activity#contributorIdentity',
+        identity: did,  // the community DID
+      },
+      contributionDetails: {
+        $type: 'org.hypercerts.claim.activity#contributorRole',
+        role: 'organization',
+      },
+      contributionWeight: '1',
+    });
+  }
+
+  record.contributors = contributors;
 
   // Create the record in collection org.hypercerts.claim.activity
   let createResult;
@@ -158,5 +201,6 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
     cid: createResult.data.cid,
     title: input.title,
     hyperscanUrl,
+    contributorCount: contributors.length,
   };
 }
