@@ -70,6 +70,7 @@ async function loginAtproto(): Promise<AtpAgent> {
     piModel: 'google/gemini-2.5-flash',
     speciesIdModel: 'gemini-2.5-flash',
     gfwDataApiKey: undefined,
+    adminUserId: 0,
   };
 
   // getAtprotoAgent caches on first call — subsequent calls return the same instance

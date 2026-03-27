@@ -5,6 +5,8 @@ export interface EnvConfig {
   // Required
   telegramBotToken: string;
   geminiApiKey: string;
+  // Required for access control — Telegram user ID of the initial admin
+  adminUserId: number;
 
   // ATProto (optional — publishing disabled without these)
   atprotoHandle: string | undefined;
@@ -34,6 +36,17 @@ export function loadEnvConfig(): EnvConfig {
   const geminiApiKey = process.env.GEMINI_API_KEY;
   if (!geminiApiKey) missing.push("GEMINI_API_KEY");
 
+  const adminUserIdRaw = process.env.ADMIN_USER_ID;
+  let adminUserId: number | undefined;
+  if (!adminUserIdRaw) {
+    missing.push("ADMIN_USER_ID");
+  } else {
+    adminUserId = parseInt(adminUserIdRaw, 10);
+    if (isNaN(adminUserId)) {
+      missing.push("ADMIN_USER_ID (must be a number)");
+    }
+  }
+
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
   }
@@ -41,6 +54,7 @@ export function loadEnvConfig(): EnvConfig {
   return {
     telegramBotToken: telegramBotToken!,
     geminiApiKey: geminiApiKey!,
+    adminUserId: adminUserId!,
 
     atprotoHandle: process.env.ATPROTO_HANDLE || undefined,
     atprotoPassword: process.env.ATPROTO_PASSWORD || undefined,
