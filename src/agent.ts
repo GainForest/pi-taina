@@ -19,6 +19,7 @@ import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, ge
 import { generateTreeCoverLossChart, buildGfwMapUrl } from "./tools/gfw-chart.js";
 import { transcribeVoice } from "./tools/transcribe-voice.js";
 import { queryHyperindex } from "./tools/query-hyperindex.js";
+import { createHypercert } from "./tools/create-hypercert.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -135,6 +136,18 @@ const queryHyperindexSchema = Type.Object({
   searchQuery: Type.Optional(Type.String({ description: 'Free-text search query (required for type=search)' })),
   did: Type.Optional(Type.String({ description: 'Filter by DID (ATProto decentralized identifier). Use community DID to see our records.' })),
   limit: Type.Optional(Type.Number({ description: 'Max results to return (default 10, max 20)' })),
+});
+
+const createHypercertSchema = Type.Object({
+  title: Type.String({ description: 'Title of the impact claim (e.g. "Community Reforestation Project")' }),
+  shortDescription: Type.String({ description: 'Brief description of the impact work (max 300 chars)' }),
+  description: Type.Optional(Type.String({ description: 'Longer description of the work and its impact (max 3000 chars)' })),
+  startDate: Type.Optional(Type.String({ description: 'When the work started (ISO 8601 date)' })),
+  endDate: Type.Optional(Type.String({ description: 'When the work ended or will end (ISO 8601 date)' })),
+  workScope: Type.Optional(Type.String({ description: 'Comma-separated work scope tags (e.g. "reforestation, community building, carbon sequestration")' })),
+  latitude: Type.Optional(Type.Number({ description: 'GPS latitude of the project location' })),
+  longitude: Type.Optional(Type.Number({ description: 'GPS longitude of the project location' })),
+  locationName: Type.Optional(Type.String({ description: 'Name of the project location' })),
 });
 
 /**
@@ -403,6 +416,35 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const createHypercertTool: ToolDefinition<typeof createHypercertSchema> = {
+    name: 'create_hypercert',
+    label: 'Create Hypercert',
+    description: 'Create a hypercert (impact certificate) to record conservation or community work. Use when the user wants to document a project, initiative, or impact claim — not a species observation.',
+    parameters: createHypercertSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const user = stateRef.state.currentUser;
+      if (!user) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'No user context' }) }], details: {} };
+      }
+      const photos = stateRef.state.photos;
+      const result = await createHypercert({
+        title: params.title,
+        shortDescription: params.shortDescription,
+        description: params.description,
+        startDate: params.startDate,
+        endDate: params.endDate,
+        workScope: params.workScope,
+        decimalLatitude: params.latitude,
+        decimalLongitude: params.longitude,
+        locationName: params.locationName,
+        image: photos.length > 0 ? photos[photos.length - 1] : undefined,
+        submittedBy: user,
+      });
+      if (result.success) stateRef.state.photos = [];
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: {} };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
@@ -410,6 +452,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     clearPhotosTool as unknown as ToolDefinition,
     forestReportTool as unknown as ToolDefinition,
     queryHyperindexTool as unknown as ToolDefinition,
+    createHypercertTool as unknown as ToolDefinition,
   ];
 }
 
