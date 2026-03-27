@@ -20,6 +20,7 @@ import { generateTreeCoverLossChart, buildGfwMapUrl } from "./tools/gfw-chart.js
 import { transcribeVoice } from "./tools/transcribe-voice.js";
 import { queryHyperindex } from "./tools/query-hyperindex.js";
 import { createHypercert } from "./tools/create-hypercert.js";
+import { attachObservations } from "./tools/attach-observations.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -148,6 +149,13 @@ const createHypercertSchema = Type.Object({
   latitude: Type.Optional(Type.Number({ description: 'GPS latitude of the project location' })),
   longitude: Type.Optional(Type.Number({ description: 'GPS longitude of the project location' })),
   locationName: Type.Optional(Type.String({ description: 'Name of the project location' })),
+});
+
+const attachObservationsSchema = Type.Object({
+  hypercertUri: Type.String({ description: 'AT URI of the hypercert to attach observations to (from create_hypercert result)' }),
+  hypercertCid: Type.String({ description: 'CID of the hypercert record (from create_hypercert result)' }),
+  sinceDate: Type.Optional(Type.String({ description: 'Only include observations recorded after this date (ISO 8601)' })),
+  limit: Type.Optional(Type.Number({ description: 'Max observations to attach (default 100, max 200)' })),
 });
 
 /**
@@ -445,6 +453,22 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const attachObservationsTool: ToolDefinition<typeof attachObservationsSchema> = {
+    name: 'attach_observations',
+    label: 'Attach Observations to Hypercert',
+    description: 'Link community biodiversity observations as verifiable evidence to a hypercert. Use after creating a hypercert to back it with real data. Queries the community\'s published observations and creates an evidence attachment.',
+    parameters: attachObservationsSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const result = await attachObservations({
+        hypercertUri: params.hypercertUri,
+        hypercertCid: params.hypercertCid,
+        sinceDate: params.sinceDate,
+        limit: params.limit,
+      });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: {} };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
@@ -453,6 +477,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     forestReportTool as unknown as ToolDefinition,
     queryHyperindexTool as unknown as ToolDefinition,
     createHypercertTool as unknown as ToolDefinition,
+    attachObservationsTool as unknown as ToolDefinition,
   ];
 }
 
