@@ -3,6 +3,7 @@
 
 import { getAtprotoAgent, getCommunityDid, getCommunityHandle } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
+import { getOrgContext } from "../hyperindex.js";
 
 export interface TelegramUser {
   id: number;           // Telegram user ID (stable, numeric)
@@ -56,6 +57,7 @@ export interface PublishResult {
   success: true;
   uri: string;
   cid: string;
+  occurrenceID: string;
   scientificName: string;
   vernacularName?: string;
   location: string;
@@ -121,6 +123,9 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
   const eventDate = input.eventDate ?? new Date().toISOString().split("T")[0];
   const createdAt = new Date().toISOString();
 
+  // Generate a stable occurrence ID for this record
+  const occurrenceID = crypto.randomUUID();
+
   // Build the Darwin Core record
   // IMPORTANT: decimalLatitude and decimalLongitude MUST be strings per the lexicon schema
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -136,9 +141,47 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
     createdAt,
   };
 
+  // Org context — institutionCode, rightsHolder, datasetName
+  const org = getOrgContext();
+  if (org?.displayName) {
+    record.institutionCode = org.displayName;
+    record.rightsHolder = org.displayName;
+    record.datasetName = org.displayName + " Community Observations";
+  }
+  if (!record.datasetName) {
+    record.datasetName = "Pi-Tainá Community Observations";
+  }
+
+  // Metadata defaults
+  record.license = "http://creativecommons.org/licenses/by/4.0/";
+  record.identifiedBy = "Gemini AI | " + telegramAttribution;
+  record.dateIdentified = createdAt;
+  record.occurrenceID = occurrenceID;
+
   // Optional taxonomy / vernacular
   if (input.vernacularName) {
     record.vernacularName = input.vernacularName;
+  }
+
+  // Taxonomy fields
+  if (input.kingdom) record.kingdom = input.kingdom;
+  if (input.phylum) record.phylum = input.phylum;
+  if (input.class_) record.class = input.class_;  // ATProto field is 'class', JS var is 'class_'
+  if (input.order) record.order = input.order;
+  if (input.family) record.family = input.family;
+  if (input.genus) record.genus = input.genus;
+  if (input.specificEpithet) record.specificEpithet = input.specificEpithet;
+  if (input.taxonRank) record.taxonRank = input.taxonRank;
+
+  // Build higherClassification from available taxonomy parts
+  const taxParts = [input.kingdom, input.phylum, input.class_, input.order, input.family, input.genus].filter(Boolean);
+  if (taxParts.length > 0) record.higherClassification = taxParts.join("|");
+
+  // Nomenclatural code based on kingdom
+  if (input.kingdom) {
+    const kingdomLower = input.kingdom.toLowerCase();
+    if (kingdomLower === "animalia") record.nomenclaturalCode = "ICZN";
+    else if (kingdomLower === "plantae" || kingdomLower === "fungi") record.nomenclaturalCode = "ICN";
   }
 
   // Location fields — coordinates MUST be strings per ATProto lexicon
@@ -148,11 +191,17 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
     record.geodeticDatum = "EPSG:4326";
     if (input.coordinateUncertaintyInMeters !== undefined) {
       record.coordinateUncertaintyInMeters = input.coordinateUncertaintyInMeters;
+    } else {
+      record.coordinateUncertaintyInMeters = 50;  // reasonable default for phone GPS
     }
   }
   if (input.locality) record.locality = input.locality;
   if (input.country) record.country = input.country;
   if (input.countryCode) record.countryCode = input.countryCode;
+
+  // Extended location fields
+  if (input.stateProvince) record.stateProvince = input.stateProvince;
+  if (input.municipality) record.municipality = input.municipality;
 
   // Optional observation details
   if (input.habitat) record.habitat = input.habitat;
@@ -182,7 +231,14 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
     }
 
     if (blobRefs.length > 0) {
-      record.imageEvidence = blobRefs.map((ref) => ({ file: ref }));
+      // imageEvidence is a single object { file: blobRef } per the lexicon (not an array)
+      record.imageEvidence = { file: blobRefs[0] };
+      if (blobRefs.length > 1) {
+        // Store additional image refs in dynamicProperties as JSON
+        record.dynamicProperties = JSON.stringify({
+          additionalImages: blobRefs.slice(1).map((ref, i) => ({ index: i + 2, blobRef: ref })),
+        });
+      }
       record.dcType = "StillImage";
       hasImage = true;
       imageCount = blobRefs.length;
@@ -215,6 +271,7 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
     success: true,
     uri: createResult.data.uri,
     cid: createResult.data.cid,
+    occurrenceID,
     scientificName: input.scientificName,
     vernacularName: input.vernacularName,
     location,

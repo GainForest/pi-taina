@@ -18,6 +18,7 @@ import { geocodeLocation } from "./tools/geocode-location.js";
 import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts, reverseGeocodeAdmin } from "./tools/gfw-api.js";
 import { generateTreeCoverLossChart, buildGfwMapUrl } from "./tools/gfw-chart.js";
 import { transcribeVoice } from "./tools/transcribe-voice.js";
+import { queryHyperindex } from "./tools/query-hyperindex.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -123,6 +124,17 @@ const forestReportSchema = Type.Object({
   chartTitle: Type.Optional(Type.String({ description: "Chart title in the user's language. E.g. 'Texcoco — Pérdida de Bosque' for Spanish. If not provided, defaults to '<area> — Tree Cover Loss'." })),
   chartAxisY: Type.Optional(Type.String({ description: "Y-axis label for the chart in the user's language. E.g. 'Hectáreas' for Spanish, 'Hectares' for English/Portuguese." })),
   chartAxisX: Type.Optional(Type.String({ description: "X-axis label for the chart in the user's language. E.g. 'Año' for Spanish, 'Year' for English, 'Ano' for Portuguese." })),
+});
+
+const queryHyperindexSchema = Type.Object({
+  type: Type.Union([
+    Type.Literal('occurrences'),
+    Type.Literal('hypercerts'),
+    Type.Literal('search'),
+  ], { description: 'What to query: occurrences (biodiversity records), hypercerts (impact certificates), or search (free-text across all)' }),
+  searchQuery: Type.Optional(Type.String({ description: 'Free-text search query (required for type=search)' })),
+  did: Type.Optional(Type.String({ description: 'Filter by DID (ATProto decentralized identifier). Use community DID to see our records.' })),
+  limit: Type.Optional(Type.Number({ description: 'Max results to return (default 10, max 20)' })),
 });
 
 /**
@@ -375,12 +387,29 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const queryHyperindexTool: ToolDefinition<typeof queryHyperindexSchema> = {
+    name: 'query_hyperindex',
+    label: 'Query Hyperindex',
+    description: 'Search and browse biodiversity records and hypercerts on the Hypersphere network. Use to find species observations, impact certificates, or search across all records.',
+    parameters: queryHyperindexSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const result = await queryHyperindex({
+        type: params.type,
+        searchQuery: params.searchQuery,
+        did: params.did,
+        limit: params.limit,
+      });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: {} };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
     geocodeLocationTool as unknown as ToolDefinition,
     clearPhotosTool as unknown as ToolDefinition,
     forestReportTool as unknown as ToolDefinition,
+    queryHyperindexTool as unknown as ToolDefinition,
   ];
 }
 
