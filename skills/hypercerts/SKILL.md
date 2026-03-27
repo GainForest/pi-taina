@@ -24,6 +24,17 @@ description: Create hypercerts (impact certificates) to document conservation pr
 5. Suggest work scope tags based on what they described
 6. Call create_hypercert with all gathered info
 7. Share the Hyperscan link so they can view their impact certificate
+8. After creating the hypercert, offer to attach community observations as evidence
+
+## Linking Observations
+After creating a hypercert, ALWAYS offer to link the community's observations as evidence:
+- 'Want me to attach your community's biodiversity records as evidence? 📋'
+- If yes, call attach_observations with the hypercert URI and CID from the create_hypercert result
+- Optionally ask about a date range: 'Should I include all observations, or just from a specific period?'
+- After attaching, celebrate: '🏆 Your hypercert is now backed by X verified observations!'
+- Share both the hypercert and attachment Hyperscan links
+
+This is the most powerful flow — a hypercert backed by real, verifiable biodiversity data.
 
 ## Presentation
 - Celebrate the creation: 'Your impact is now on the record! 🏆'

@@ -9,6 +9,7 @@ import { queryHyperindex } from './tools/query-hyperindex.js';
 import { publishOccurrence } from './tools/publish-occurrence.js';
 import { createHypercert } from './tools/create-hypercert.js';
 import { getAtprotoAgent, getCommunityDid } from './atproto.js';
+import { attachObservations } from './tools/attach-observations.js';
 import type { AtpAgent } from '@atproto/api';
 
 // ─── Result tracking ──────────────────────────────────────────────────────────
@@ -301,6 +302,132 @@ async function testHypercert(): Promise<void> {
   }
 }
 
+// ─── Subcommand: attach ───────────────────────────────────────────────────────
+
+async function testAttach(): Promise<void> {
+  console.log('\n── attach ──────────────────────────────────────────────────────');
+
+  if (!hasAtprotoCreds()) {
+    results.push(skip('attach', 'ATPROTO_HANDLE / ATPROTO_PASSWORD not set'));
+    return;
+  }
+
+  let agent: AtpAgent;
+  let did: string;
+
+  try {
+    agent = await loginAtproto();
+    did = getCommunityDid();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('attach', `ATProto login failed: ${msg}`));
+    return;
+  }
+
+  // Step 1: Create a test hypercert to attach observations to
+  let hypercertResult: Awaited<ReturnType<typeof createHypercert>>;
+  try {
+    hypercertResult = await createHypercert({
+      title: 'Smoke Test Hypercert (attach)',
+      shortDescription: 'Automated smoke test for attach — safe to delete',
+      description: 'This is a smoke test record created by test-smoke.ts to verify the attach_observations flow works.',
+      workScope: 'testing, automation',
+      submittedBy: { id: 0, username: 'smoke-test', displayName: 'Smoke Test' },
+    });
+
+    if (!hypercertResult.success) {
+      results.push(fail('attach', `Failed to create hypercert — ${hypercertResult.error}`));
+      return;
+    }
+
+    console.log(`   Hypercert URI: ${hypercertResult.uri}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('attach', `createHypercert threw: ${msg}`));
+    return;
+  }
+
+  // Step 2: Attach observations to the hypercert
+  try {
+    const result = await attachObservations({
+      hypercertUri: hypercertResult.uri,
+      hypercertCid: hypercertResult.cid,
+      limit: 3,
+    });
+
+    if (!result.success) {
+      // If no observations exist yet, skip gracefully instead of failing
+      if (result.error.includes('No observations found')) {
+        console.log(`   No observations indexed yet — skipping attachment`);
+
+        // Still clean up the hypercert
+        const certRkey = hypercertResult.uri.split('/').pop()!;
+        await agent.com.atproto.repo.deleteRecord({
+          repo: did,
+          collection: 'org.hypercerts.claim.activity',
+          rkey: certRkey,
+        });
+        console.log('   Cleaned up test hypercert');
+
+        results.push(skip('attach', 'No community observations indexed yet'));
+        return;
+      }
+
+      results.push(fail('attach', `attachObservations failed — ${result.error}`));
+
+      // Clean up hypercert even on failure
+      try {
+        const certRkey = hypercertResult.uri.split('/').pop()!;
+        await agent.com.atproto.repo.deleteRecord({
+          repo: did,
+          collection: 'org.hypercerts.claim.activity',
+          rkey: certRkey,
+        });
+      } catch {
+        // best-effort cleanup
+      }
+      return;
+    }
+
+    console.log(`   Attachment URI: ${result.attachmentUri}`);
+    console.log(`   Occurrence count: ${result.occurrenceCount}`);
+    console.log(`   Hyperscan: ${result.hyperscanUrl}`);
+
+    // Step 3: Delete attachment first, then hypercert
+    const attachRkey = result.attachmentUri.split('/').pop()!;
+    await agent.com.atproto.repo.deleteRecord({
+      repo: did,
+      collection: 'org.hypercerts.context.attachment',
+      rkey: attachRkey,
+    });
+
+    const certRkey = hypercertResult.uri.split('/').pop()!;
+    await agent.com.atproto.repo.deleteRecord({
+      repo: did,
+      collection: 'org.hypercerts.claim.activity',
+      rkey: certRkey,
+    });
+    console.log('   Cleaned up attachment + hypercert');
+
+    results.push(pass('attach', `linked ${result.occurrenceCount} observations + cleaned up`));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('attach', msg));
+
+    // Best-effort cleanup of hypercert
+    try {
+      const certRkey = hypercertResult.uri.split('/').pop()!;
+      await agent.com.atproto.repo.deleteRecord({
+        repo: did,
+        collection: 'org.hypercerts.claim.activity',
+        rkey: certRkey,
+      });
+    } catch {
+      // best-effort cleanup
+    }
+  }
+}
+
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 function printSummary(): void {
@@ -336,12 +463,17 @@ async function main(): Promise<void> {
       await testHypercert();
       break;
 
+    case 'attach':
+      await testAttach();
+      break;
+
     case 'all':
     default:
       await testHyperindex();
       await testOrg();
       await testOccurrence();
       await testHypercert();
+      await testAttach();
       break;
   }
 
