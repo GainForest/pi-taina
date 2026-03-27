@@ -5,7 +5,11 @@
 
 import { Bot, InputFile } from "grammy";
 import type { EnvConfig } from "./env.js";
-import { isAuthorized, isAdmin } from './whitelist.js';
+import { 
+  isAuthorized, isAdmin, 
+  addJoinRequest, approveRequest, 
+  getPendingRequests, addMember, removeMember, getMembers 
+} from './whitelist.js';
 
 // ─── Exported Types ──────────────────────────────────────────────────────────
 
@@ -157,6 +161,22 @@ export async function createTelegramBot(
       const chatType = msg.chat.type; // "private" | "group" | "supergroup" | "channel"
       const isGroup = chatType === "group" || chatType === "supergroup";
 
+      // ── Check for /join BEFORE the access gate (unauthorized users can use this) ──
+      const rawTextForCommand = msg.text ?? msg.caption ?? '';
+      if (rawTextForCommand.trim().startsWith('/join')) {
+        if (isAuthorized(user.id)) {
+          await ctx.reply('You\'re already part of the community! 🌿');
+        } else {
+          const added = addJoinRequest(user.id, user.displayName, user.username);
+          if (added) {
+            await ctx.reply('Got it! I\'ll let the admins know you want to join 🙌');
+          } else {
+            await ctx.reply('You already have a pending request. Hang tight! ⏳');
+          }
+        }
+        return;
+      }
+
       // ── Access control ──────────────────────────────────────────────────
       if (!isAuthorized(user.id)) {
         // Don't spam groups — only reply in DMs
@@ -165,6 +185,85 @@ export async function createTelegramBot(
             'Hey! 👋 I don\'t recognize you yet. Ask a community admin to add you, or send /join to request access.'
           );
         }
+        return;
+      }
+
+      // ── Admin commands ─────────────────────────────────────────────────────
+      if (rawTextForCommand.trim().startsWith('/approve')) {
+        if (!isAdmin(user.id)) {
+          await ctx.reply('Only admins can approve members.');
+          return;
+        }
+        const targetId = parseInt(rawTextForCommand.trim().split(/\s+/)[1], 10);
+        if (isNaN(targetId)) {
+          await ctx.reply('Usage: /approve <user_id>\nCheck /pending for pending requests.');
+          return;
+        }
+        const approved = approveRequest(targetId, user.id);
+        if (approved) {
+          await ctx.reply(`✅ User ${targetId} approved! They can now use the bot.`);
+          // Try to notify the approved user
+          try {
+            await bot.api.sendMessage(targetId, 'Welcome to the community! You can now talk to me 🌿🎉');
+          } catch { /* user may not have started DM with bot */ }
+        } else {
+          // Maybe they're not in pending — try direct add
+          const added = addMember(targetId, user.id);
+          if (added) {
+            await ctx.reply(`✅ User ${targetId} added as member.`);
+          } else {
+            await ctx.reply(`User ${targetId} is already a member.`);
+          }
+        }
+        return;
+      }
+
+      if (rawTextForCommand.trim().startsWith('/remove')) {
+        if (!isAdmin(user.id)) {
+          await ctx.reply('Only admins can remove members.');
+          return;
+        }
+        const targetId = parseInt(rawTextForCommand.trim().split(/\s+/)[1], 10);
+        if (isNaN(targetId)) {
+          await ctx.reply('Usage: /remove <user_id>');
+          return;
+        }
+        const removed = removeMember(targetId);
+        if (removed) {
+          await ctx.reply(`Removed user ${targetId}.`);
+        } else {
+          await ctx.reply(`Could not remove user ${targetId}. They may be an admin or not a member.`);
+        }
+        return;
+      }
+
+      if (rawTextForCommand.trim().startsWith('/pending')) {
+        if (!isAdmin(user.id)) {
+          await ctx.reply('Only admins can view pending requests.');
+          return;
+        }
+        const requests = getPendingRequests();
+        if (requests.length === 0) {
+          await ctx.reply('No pending requests 👍');
+        } else {
+          const lines = requests.map(r => 
+            `• ${r.displayName}${r.username ? ` (@${r.username})` : ''} — ID: ${r.userId}`
+          );
+          await ctx.reply(`Pending requests:\n${lines.join('\n')}\n\nUse /approve <user_id> to approve.`);
+        }
+        return;
+      }
+
+      if (rawTextForCommand.trim().startsWith('/members')) {
+        if (!isAdmin(user.id)) {
+          await ctx.reply('Only admins can view the member list.');
+          return;
+        }
+        const members = getMembers();
+        const lines = members.map(m =>
+          `• ${m.displayName ?? 'Unknown'} (${m.role}) — ID: ${m.userId}`
+        );
+        await ctx.reply(`Community members:\n${lines.join('\n')}`);
         return;
       }
 
