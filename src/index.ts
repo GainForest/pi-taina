@@ -4,6 +4,7 @@ import { createTelegramBot } from "./telegram.js";
 import { sendToAgent, disposeAllSessions, getPendingChart } from "./agent.js";
 import { getAtprotoAgent, getCommunityDid } from "./atproto.js";
 import { initOrgContext } from "./hyperindex.js";
+import { initWhitelist } from './whitelist.js';
 
 async function main() {
   // 1. Validate required env vars and load typed config (fail fast)
@@ -14,6 +15,10 @@ async function main() {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
+
+  // 1b. Initialize access control whitelist
+  initWhitelist(config.adminUserId);
+  console.log('✅ Whitelist initialized');
 
   // 2. Initialize ATProto (optional — warn if not configured, don't crash)
   if (isAtprotoConfigured(config)) {

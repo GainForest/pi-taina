@@ -5,6 +5,7 @@
 
 import { Bot, InputFile } from "grammy";
 import type { EnvConfig } from "./env.js";
+import { isAuthorized, isAdmin } from './whitelist.js';
 
 // ─── Exported Types ──────────────────────────────────────────────────────────
 
@@ -40,6 +41,8 @@ export interface IncomingMessage {
   isGroup: boolean;
   // Whether the bot was mentioned (in groups)
   isMentioned: boolean;
+  // User's access role
+  isAdmin: boolean;
 }
 
 // Callback for processing messages
@@ -142,8 +145,28 @@ export async function createTelegramBot(
       const msg = ctx.message;
       if (!msg || !msg.from) return;
 
+      // ── Extract user info ──────────────────────────────────────────────────
+      const from = msg.from;
+      const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
+      const user = {
+        id: from.id,
+        username: from.username,
+        displayName,
+      };
+
       const chatType = msg.chat.type; // "private" | "group" | "supergroup" | "channel"
       const isGroup = chatType === "group" || chatType === "supergroup";
+
+      // ── Access control ──────────────────────────────────────────────────
+      if (!isAuthorized(user.id)) {
+        // Don't spam groups — only reply in DMs
+        if (!isGroup) {
+          await ctx.reply(
+            'Hey! 👋 I don\'t recognize you yet. Ask a community admin to add you, or send /join to request access.'
+          );
+        }
+        return;
+      }
 
       // ── Determine if bot is mentioned ──────────────────────────────────────
       let rawText: string | undefined =
@@ -172,15 +195,6 @@ export async function createTelegramBot(
         return;
       }
 
-      // ── Extract user info ──────────────────────────────────────────────────
-      const from = msg.from;
-      const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
-      const user = {
-        id: from.id,
-        username: from.username,
-        displayName,
-      };
-
       // ── Build IncomingMessage ──────────────────────────────────────────────
       const incoming: IncomingMessage = {
         chatId: msg.chat.id,
@@ -189,6 +203,7 @@ export async function createTelegramBot(
         user,
         isGroup,
         isMentioned,
+        isAdmin: isAdmin(user.id),
       };
 
       // ── Photo handling ─────────────────────────────────────────────────────
