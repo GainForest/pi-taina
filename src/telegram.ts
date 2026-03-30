@@ -393,7 +393,7 @@ export async function createTelegramBot(
       parseMode?: "HTML" | "Markdown" | "MarkdownV2";
     }
   ): Promise<void> => {
-    const parseMode = options?.parseMode ?? "Markdown";
+    const parseMode = options?.parseMode ?? "HTML";
     const chunks = splitMessage(text);
     for (let i = 0; i < chunks.length; i++) {
       const isFirst = i === 0;
@@ -406,7 +406,7 @@ export async function createTelegramBot(
               : undefined,
         });
       } catch (err) {
-        // Markdown parsing failed — send as plain text
+        // HTML/Markdown parsing failed — send as plain text
         console.warn(
           "Failed to send with parse_mode, retrying as plain text:",
           err instanceof Error ? err.message : err

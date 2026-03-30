@@ -22,6 +22,7 @@ export interface QueryResult {
     eventDate?: string;
     country?: string;
     locality?: string;
+    recordedBy?: string;
     // Hypercert fields
     title?: string;
     shortDescription?: string;
@@ -63,7 +64,7 @@ function buildOccurrencesQuery(limit: number, did?: string): string {
   const whereClause = did ? `, where: { did: { eq: "${did}" } }` : '';
   return `query {
   appGainforestDwcOccurrence(first: ${limit}${whereClause}) {
-    edges { node { uri did scientificName vernacularName eventDate country locality createdAt } }
+    edges { node { uri did scientificName vernacularName eventDate country locality recordedBy createdAt } }
     totalCount
   }
 }`;
@@ -102,6 +103,7 @@ interface OccurrenceNode {
   eventDate?: string;
   country?: string;
   locality?: string;
+  recordedBy?: string;
   createdAt?: string;
 }
 
@@ -222,6 +224,7 @@ export async function queryHyperindex(input: QueryInput): Promise<QueryResponse>
         ...(node.eventDate !== undefined && { eventDate: node.eventDate }),
         ...(node.country !== undefined && { country: node.country }),
         ...(node.locality !== undefined && { locality: node.locality }),
+        ...(node.recordedBy !== undefined && { recordedBy: node.recordedBy }),
         ...(node.createdAt !== undefined && { createdAt: node.createdAt }),
         hyperscanUrl: buildHyperscanUrl(node.uri),
       };
