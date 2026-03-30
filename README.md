@@ -63,6 +63,7 @@ Copy `.env.example` to `.env` and set the following variables:
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes | From @BotFather on Telegram |
 | `GEMINI_API_KEY` | Yes | Google Gemini API key (used for agent and species ID). Get from [aistudio.google.com](https://aistudio.google.com/apikey) |
+| `ADMIN_USER_ID` | Yes | Telegram user ID of the bot admin. Get yours from [@userinfobot](https://t.me/userinfobot) |
 | `ATPROTO_HANDLE` | For publishing | Community ATProto/Bluesky handle (e.g. `taina-amazon.bsky.social`) |
 | `ATPROTO_PASSWORD` | For publishing | App password for the ATProto account (not your main password) |
 | `ATPROTO_SERVICE` | No | ATProto service URL (default: `https://bsky.social`). Change if your community runs its own PDS |
@@ -160,9 +161,9 @@ Tainá can also **build new skills on demand** — if a community member asks fo
 
 ---
 
-## Hypercerts
+## Bumicerts (Hypercerts)
 
-Hypercerts are impact certificates that let communities document conservation and reforestation work as verifiable, on-chain records.
+Bumicerts (also known as hypercerts) are impact certificates that let communities document conservation and reforestation work as verifiable, on-chain records.
 
 **What you can do:**
 - Create a hypercert for a project or initiative (with title, description, location, dates, work scope)
@@ -190,36 +191,79 @@ Examples of customizations:
 
 ## How It Works
 
+### Architecture
+
+```mermaid
+flowchart TD
+    U["👤 Telegram User"] -->|message| TG["📱 Telegram Bot\n(grammY)"]
+    
+    TG -->|/join| WL["🔐 Whitelist\ndata/whitelist.json"]
+    TG -->|"/approve /remove\n/pending /members"| WL
+    
+    TG -->|"authorized?"| GATE{"Access Gate"}
+    GATE -->|"❌ unknown"| REJECT["'Send /join to request access'"]
+    GATE -->|"✅ member"| AGENT["🤖 Pi Agent\n(custom tools only)"]
+    GATE -->|"✅ admin"| AGENT_ADMIN["🤖 Pi Agent\n(custom tools + bash/read/write/edit)"]
+    
+    AGENT --> TOOLS
+    AGENT_ADMIN --> TOOLS
+    AGENT_ADMIN --> FS["📁 Filesystem\n(skill building)"]
+    
+    subgraph TOOLS ["🧰 Custom Tools"]
+        ID["🔍 identify_species\n(Gemini Vision)"]
+        PUB["📝 publish_occurrence\n(ATProto + Darwin Core)"]
+        GFW["🌳 forest_report\n(Global Forest Watch)"]
+        GEO["📍 geocode_location"]
+        QH["🔎 query_hyperindex\n(Hypersphere)"]
+        HC["🏆 create_hypercert\n(Bumicerts)"]
+        AO["📎 attach_observations"]
+        TV["🎤 transcribe_voice\n(Gemini)"]
+    end
+    
+    PUB -->|"Darwin Core record"| ATP["🦋 ATProto PDS\n(community account)"]
+    HC -->|"impact certificate"| ATP
+    AO -->|"evidence link"| ATP
+    QH -->|"GraphQL query"| HI["🌐 Hyperindex API\n(GainForest)"]
+    GFW -->|"REST API"| GFWAPI["🛰️ GFW Data API"]
 ```
-Telegram message → Pi agent → AI response
-       ↓
-   Photo sent → Species identification (Gemini vision)
-                → Photo quality coaching
-                → Offer to publish observation
-                       ↓
-               User confirms → Geocode location
-                             → Publish to ATProto PDS as Darwin Core record
-                             → Optionally create a hypercert
 
-Voice note → Transcribed → Treated as text message
+### Message Flow
 
-Location shared → Forest health report (GFW)
-                → Tree cover loss chart + GFW map link
+1. User sends a message on Telegram (text, photo, voice, or location)
+2. Bot checks if user is in the local whitelist (`data/whitelist.json`)
+3. Unknown users are blocked — they can send `/join` to request access
+4. Authorized users' messages go to the Pi agent with their role (admin or member)
+5. The agent picks the right tool based on the message:
+   - 📸 Photo → species identification → offer to publish
+   - 🎤 Voice → transcription → treated as text
+   - 📍 Location → forest health report with chart
+   - 💬 Text → conversation, queries, bumicert creation, etc.
+6. Results are sent back as HTML-formatted Telegram messages
 
-"Create a hypercert" → Hypercert creation wizard
-                     → Attach community observations as evidence
+### Deployment Model
 
-"Search hyperindex" → Browse community records on the Hypersphere
+Each community runs their own instance of Tainá:
+
+```
+Community A (Amazon)          Community B (Nairobi)
+┌─────────────────────┐      ┌─────────────────────┐
+│ @taina_amazon_bot   │      │ @taina_nairobi_bot  │
+│ Mac Mini / RPi      │      │ Mac Mini / RPi      │
+│ .env (own keys)     │      │ .env (own keys)     │
+│ data/whitelist.json │      │ data/whitelist.json │
+│ ATProto: amazon.bsky│      │ ATProto: nairobi.bsk│
+└─────────────────────┘      └─────────────────────┘
+         │                            │
+         └──────────┬─────────────────┘
+                    ▼
+          🌐 Hypersphere Network
+          (shared, open data layer)
 ```
 
-- **Telegram**: grammY library handles incoming messages, photos, voice notes, and locations
-- **Agent**: Pi coding agent manages conversation context and tool use
-- **Species ID**: Google Gemini vision model analyzes photos
-- **Publishing**: Darwin Core occurrence records posted to ATProto PDS
-- **Forest monitoring**: GFW Data API — tree cover, fire alerts, deforestation alerts
-- **Hypercerts**: org.hypercerts.claim.activity records on ATProto + Hypersphere network
-- **Groups**: Tainá responds when @mentioned, or when photos/locations/voice are sent
-- **DMs**: Tainá always responds to all messages
+- **Local-first**: each community owns their bot, data, and whitelist
+- **No shared cloud**: no database, no auth service, no central server
+- **Connected via Hypersphere**: all communities' records are queryable across the network
+- **Self-extensible**: admin users can ask Tainá to build new skills
 
 ---
 
@@ -264,6 +308,7 @@ pi-taina/
 │   ├── atproto.ts            # ATProto community account client
 │   ├── env.ts                # Environment variable loader
 │   ├── hyperindex.ts         # Hyperindex GraphQL client (org context)
+│   ├── whitelist.ts          # Local-first access control (JSON whitelist)
 │   └── tools/
 │       ├── identify-species.ts    # Species ID via Gemini vision
 │       ├── publish-occurrence.ts  # Darwin Core → ATProto
@@ -281,7 +326,9 @@ pi-taina/
 │   ├── geocoding/
 │   ├── hyperindex/
 │   └── hypercerts/
-├── data/sessions/            # Per-user agent session state (gitignored)
+├── data/
+│   ├── sessions/             # Per-user agent session state (gitignored)
+│   └── whitelist.json        # Community member whitelist (gitignored)
 ├── .env.example              # Environment variable template
 └── package.json
 ```
