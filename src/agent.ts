@@ -136,6 +136,7 @@ const queryHyperindexSchema = Type.Object({
   ], { description: 'What to query: occurrences (biodiversity records), hypercerts (impact certificates), or search (free-text across all)' }),
   searchQuery: Type.Optional(Type.String({ description: 'Free-text search query (required for type=search)' })),
   did: Type.Optional(Type.String({ description: 'Filter by community DID (ATProto decentralized identifier). ONLY use the community DID here — never invent DIDs like did:telegram:xxx. To find a specific user\'s records, query with the community DID and filter results by the recordedBy field which contains the Telegram user name and ID.' })),
+  recordedByContains: Type.Optional(Type.String({ description: 'Filter occurrences by who recorded them. Use the Telegram ID pattern "tg:<telegram_user_id>" to find a specific user\'s records. The recordedBy field contains text like "Diego Rivera (@username, tg:123456)", so passing "tg:123456" will match. This is a server-side contains filter — much faster than client-side filtering.' })),
   limit: Type.Optional(Type.Number({ description: 'Max results to return (default 10, max 20)' })),
 });
 
@@ -418,6 +419,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         type: params.type,
         searchQuery: params.searchQuery,
         did: params.did,
+        recordedByContains: params.recordedByContains,
         limit: params.limit,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: {} };

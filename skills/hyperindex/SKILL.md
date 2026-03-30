@@ -20,13 +20,12 @@ description: Search and browse biodiversity records and hypercerts on the Hypers
 
 ### User-specific queries
 When a user asks about THEIR observations ('how many have I done?', 'show me mine'):
-1. Query type='occurrences' with the community DID (you already know it)
-2. Look at the `recordedBy` field in each result — it contains the Telegram user's display name and ID (e.g. 'Diego Rivera (@diegorb, tg:123456)')
-3. Match against the current user's display name or Telegram ID from the message context
-4. Count or filter the results client-side
-5. Do NOT ask the user for their DID — you already have their identity from the message
-6. NEVER invent a DID for the user (e.g. did:telegram:xxx) — that's not a real thing
-7. NEVER filter by DID to find a user's records — DID is the COMMUNITY identifier, not the user's
+1. Use type='occurrences' with the community DID
+2. Set recordedByContains to "tg:<user_telegram_id>" — the user's Telegram ID is in every message you receive (e.g. tg:6224264108)
+3. This filters server-side — fast and accurate, returns totalCount too
+4. Do NOT ask the user for their DID — you already have their Telegram ID from the message
+5. NEVER invent a DID for the user (e.g. did:telegram:xxx) — that's not a real thing
+6. NEVER try client-side filtering — use recordedByContains instead
 
 ## Presentation (HTML for Telegram)
 Format results using HTML tags, not Markdown. Use emoji for visual structure.

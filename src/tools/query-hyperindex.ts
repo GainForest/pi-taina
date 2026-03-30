@@ -4,6 +4,8 @@ export interface QueryInput {
   type: QueryType;
   // For occurrences/hypercerts: filter by DID
   did?: string;
+  // For occurrences: filter by who recorded it (uses 'contains' match)
+  recordedByContains?: string;
   // For search: free-text query
   searchQuery?: string;
   // Pagination
@@ -60,8 +62,11 @@ function buildHyperscanUrl(uri: string): string {
 /**
  * Build GraphQL query string for occurrences.
  */
-function buildOccurrencesQuery(limit: number, did?: string): string {
-  const whereClause = did ? `, where: { did: { eq: "${did}" } }` : '';
+function buildOccurrencesQuery(limit: number, did?: string, recordedByContains?: string): string {
+  const filters: string[] = [];
+  if (did) filters.push(`did: { eq: "${did}" }`);
+  if (recordedByContains) filters.push(`recordedBy: { contains: "${recordedByContains}" }`);
+  const whereClause = filters.length > 0 ? `, where: { ${filters.join(', ')} }` : '';
   return `query {
   appGainforestDwcOccurrence(first: ${limit}${whereClause}) {
     edges { node { uri did scientificName vernacularName eventDate country locality recordedBy createdAt } }
@@ -152,7 +157,7 @@ export async function queryHyperindex(input: QueryInput): Promise<QueryResponse>
 
   let query: string;
   if (input.type === 'occurrences') {
-    query = buildOccurrencesQuery(limit, input.did);
+    query = buildOccurrencesQuery(limit, input.did, input.recordedByContains);
   } else if (input.type === 'hypercerts') {
     query = buildHypercertsQuery(limit, input.did);
   } else {
