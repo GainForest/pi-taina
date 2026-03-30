@@ -8,7 +8,7 @@ description: Search and browse biodiversity records and hypercerts on the Hypers
 ## When to Use
 - User asks 'what have we recorded?' or 'show me our observations'
 - User asks about a specific species across the network
-- User wants to see hypercerts or impact certificates
+- User wants to see hypercerts/bumicerts or impact certificates
 - User asks 'how many records do we have?'
 - User asks 'how many have I done?' or 'show me my observations'
 

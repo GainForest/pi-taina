@@ -5,10 +5,12 @@ description: Create hypercerts (impact certificates) to document conservation pr
 
 # Hypercerts
 
+> The community calls these "bumicerts" — treat "bumicert" and "hypercert" as synonyms. When talking to users, prefer "bumicert".
+
 ## When to Use
 - User talks about a project, initiative, or campaign (not a single species sighting)
 - User mentions reforestation, cleanup, monitoring program, community garden, etc.
-- User explicitly asks to create a hypercert or impact certificate
+- User explicitly asks to create a hypercert, bumicert, or impact certificate
 - User wants to document ongoing or completed conservation work
 
 ## When NOT to Use
