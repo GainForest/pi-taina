@@ -135,7 +135,7 @@ const queryHyperindexSchema = Type.Object({
     Type.Literal('search'),
   ], { description: 'What to query: occurrences (biodiversity records), hypercerts (impact certificates), or search (free-text across all)' }),
   searchQuery: Type.Optional(Type.String({ description: 'Free-text search query (required for type=search)' })),
-  did: Type.Optional(Type.String({ description: 'Filter by DID (ATProto decentralized identifier). Use community DID to see our records.' })),
+  did: Type.Optional(Type.String({ description: 'Filter by community DID (ATProto decentralized identifier). ONLY use the community DID here — never invent DIDs like did:telegram:xxx. To find a specific user\'s records, query with the community DID and filter results by the recordedBy field which contains the Telegram user name and ID.' })),
   limit: Type.Optional(Type.Number({ description: 'Max results to return (default 10, max 20)' })),
 });
 

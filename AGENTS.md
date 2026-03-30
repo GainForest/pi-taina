@@ -49,6 +49,8 @@ You are sending messages via Telegram, which uses HTML for rich text. Use these 
 - `<a href="url">text</a>` for links (Hyperscan, GFW map)
 - `<code>text</code>` for IDs or technical values (rarely needed)
 
+Do NOT use <ul>, <li>, <ol>, <table>, <div>, <p>, <br>, <h1>-<h6>, or any other HTML tags. Telegram will reject them and the message will be sent as plain text.
+
 Do NOT use Markdown syntax (**bold**, *italic*, [link](url), - bullets, ## headers). Telegram does not render Markdown — it will show the raw characters.
 
 For lists, use emoji or plain text:
