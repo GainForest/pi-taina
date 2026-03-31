@@ -1,64 +1,61 @@
----
-name: publish-observation
-description: Publish biodiversity occurrence records to the community ATProto PDS. Use after species identification when the user wants to record their observation. Handles location collection, Darwin Core record creation, and citizen science education.
----
+# Publish Observation Skill
 
-# Publish Observation
+## When to use
+When the user wants to publish/record/save a species observation to the community data store.
 
-## Publishing Flow
-When publishing an occurrence record:
-1. Ensure you have: species ID, photo, and location
-2. If location is missing, ask the user to share their Telegram location (tap the 📎 attachment button → Location)
-3. If they give a text location instead, use geocode_location to get coordinates
-4. Call publish_occurrence with all available data
-5. Celebrate the publication! "You just contributed to biodiversity data! 🌿"
+## Flow — FOLLOW THIS EXACTLY
 
-## Location Handling
-- If the user sends a Telegram location message, use those exact GPS coordinates
-- If the user types a place name, use geocode_location to convert to coordinates
-- Always prefer GPS coordinates over text locations for accuracy
-- Never refuse to publish just because location is missing — ask once, then respect their choice
+1. **Species ID required** — You must have identified the species first (via identify_species). If not, ask the user to send a photo first.
 
-## Citizen Science Education
-Weave these in naturally — one sentence at a time, never lecture:
-- "Your observations help scientists track species populations over time"
-- "Location data helps map species ranges and detect climate change impacts"
-- On first publication: "You just contributed to global biodiversity data! Every observation counts. 🎉"
-- After multiple publications: "You're building a great record of your local biodiversity!"
+2. **Location required** — Before publishing, you MUST have a location. Check if:
+   - The user already shared a Telegram location (GPS coordinates available)
+   - The user mentioned a place name you can geocode
+   - If neither: **ASK for location**. Say something like: "📍 Where did you spot this? You can share your location or tell me the place name."
+   - Use `geocode_location` to convert place names to coordinates.
 
-## Taxonomy Passthrough
-When publishing after a species identification, ALWAYS pass the taxonomy fields from the identification result to publish_occurrence:
-- kingdom, phylum, class_ (note the underscore — maps to 'class' in the record), order, family from the taxonomy object
-- genus: extract from scientificName (first word of binomial)
-- specificEpithet: extract from scientificName (second word of binomial)
-- taxonRank: usually 'species' unless the ID was at a higher rank (genus, family)
+3. **Publish with ALL data** — When calling `publish_occurrence`, you MUST pass:
 
-Example: if identify_species returned:
-  scientificName: 'Ara macao'
-  taxonomy: { kingdom: 'Animalia', phylum: 'Chordata', class: 'Aves', order: 'Psittaciformes', family: 'Psittacidae' }
+   **Required:**
+   - `scientificName` — from identification result
+   
+   **Taxonomy — ALWAYS pass ALL of these from the identification result:**
+   - `kingdom` — e.g. "Plantae", "Animalia", "Fungi"
+   - `phylum` — e.g. "Tracheophyta", "Chordata"
+   - `class_` — e.g. "Magnoliopsida", "Aves" (note: underscore because class is reserved in JS)
+   - `order` — e.g. "Asparagales", "Passeriformes"
+   - `family` — e.g. "Asparagaceae", "Fringillidae"
+   - `genus` — from identification taxonomy.genus
+   - `specificEpithet` — second word of the scientific name (e.g. "trifasciata" from "Dracaena trifasciata")
+   - `taxonRank` — usually "species"
+   
+   **Location — pass ALL available:**
+   - `decimalLatitude` and `decimalLongitude` — GPS coordinates
+   - `locality` — text description of the place
+   - `country`, `countryCode` — country info
+   - `stateProvince`, `municipality` — admin regions if known
+   
+   **Other:**
+   - `vernacularName` — common name from identification
+   - `habitat` — from identification result or user context
+   - `eventDate` — date of observation (default: today)
+   - `occurrenceRemarks` — any notes from the user
 
-Then call publish_occurrence with:
-  scientificName: 'Ara macao'
-  kingdom: 'Animalia'
-  phylum: 'Chordata'
-  class_: 'Aves'
-  order: 'Psittaciformes'
-  family: 'Psittacidae'
-  genus: 'Ara'
-  specificEpithet: 'macao'
-  taxonRank: 'species'
+4. **After publishing** — The tool returns a `hyperscanUrl`. ALWAYS share it with the user:
+   "Your observation has been published! 🎉 View it here: <a href="{hyperscanUrl}">Hyperscan</a>"
 
-## Location Enrichment
-When you have geocoded a location, pass ALL available fields:
-- decimalLatitude, decimalLongitude (from GPS or geocode)
-- locality (specific place name)
-- country, countryCode
-- stateProvince (from geocode result)
-- municipality (from geocode locality field, if it's a municipality)
+## CRITICAL — Taxonomy passthrough
+The identify_species tool returns a `taxonomy` object with kingdom, phylum, class, order, family, genus. You MUST pass ALL of these to publish_occurrence. Do NOT skip any. Do NOT make the user provide taxonomy — you already have it from the identification.
 
-The more location detail, the more useful the record is for scientists.
+Map the fields like this:
+- taxonomy.kingdom → kingdom
+- taxonomy.phylum → phylum  
+- taxonomy.class → class_ (note the underscore!)
+- taxonomy.order → order
+- taxonomy.family → family
+- taxonomy.genus → genus
 
-## Organization Context
-The bot automatically enriches records with organization info (institutionCode, rightsHolder, datasetName) if the community account has an organization registered on Hyperscan. You don't need to do anything — it happens automatically.
-
-If the org is found at boot, mention it naturally: 'Publishing for [Org Name] 🌿'
+## Dont
+- Never publish without a location — always ask if missing
+- Never skip taxonomy fields — always pass them all
+- Never forget to share the Hyperscan link after publishing
+- Never ask the user for taxonomy info — you have it from identification
