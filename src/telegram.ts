@@ -3,13 +3,14 @@
 // extracting locations, and sending responses.
 // Uses grammY for the Telegram Bot API.
 
-import { Bot, InputFile } from "grammy";
+import { Bot, InputFile, InlineKeyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
 import { 
   isAuthorized, isAdmin, 
   addJoinRequest, approveRequest, 
   getPendingRequests, addMember, removeMember, getMembers 
 } from './whitelist.js';
+import { resetSession } from "./agent.js";
 
 // ─── Exported Types ──────────────────────────────────────────────────────────
 
@@ -106,6 +107,23 @@ async function downloadTelegramFile(
   return Buffer.from(arrayBuffer);
 }
 
+// ─── Start Screen ─────────────────────────────────────────────────────────────
+
+const START_WELCOME_TEXT =
+  `🌿 <b>Hey! I'm Tainá</b> — your community biodiversity assistant.\n\n` +
+  `I can identify plants and animals from photos, check forest health for your area, ` +
+  `and help your community track nature observations.\n\n` +
+  `Tap a button below to get started 👇`;
+
+function buildStartKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("🌿 Identify a Plant", "action:identify")
+    .text("🌳 Forest Report", "action:forest")
+    .row()
+    .text("🔑 Request Access", "action:join")
+    .text("🔄 Restart Chat", "action:restart");
+}
+
 // ─── Main Export ─────────────────────────────────────────────────────────────
 
 /**
@@ -161,8 +179,17 @@ export async function createTelegramBot(
       const chatType = msg.chat.type; // "private" | "group" | "supergroup" | "channel"
       const isGroup = chatType === "group" || chatType === "supergroup";
 
-      // ── Check for /join BEFORE the access gate (unauthorized users can use this) ──
+      // ── Check for /start BEFORE the access gate (works for all users) ──
       const rawTextForCommand = msg.text ?? msg.caption ?? '';
+      if (rawTextForCommand.trim().startsWith("/start")) {
+        await ctx.reply(START_WELCOME_TEXT, {
+          parse_mode: "HTML",
+          reply_markup: buildStartKeyboard(),
+        });
+        return;
+      }
+
+      // ── Check for /join BEFORE the access gate (unauthorized users can use this) ──
       if (rawTextForCommand.trim().startsWith('/join')) {
         if (isAuthorized(user.id)) {
           await ctx.reply('You\'re already part of the community! 🌿');
@@ -369,6 +396,73 @@ export async function createTelegramBot(
       } catch (replyErr) {
         console.error("Failed to send error reply:", replyErr);
       }
+    }
+  });
+
+  // ─── Callback query handler ────────────────────────────────────────────────
+  bot.on("callback_query:data", async (ctx) => {
+    try {
+      const data = ctx.callbackQuery.data;
+      const from = ctx.callbackQuery.from;
+      const chatId = ctx.callbackQuery.message?.chat.id;
+      if (!chatId) {
+        await ctx.answerCallbackQuery();
+        return;
+      }
+
+      const userId = from.id;
+      const authorized = isAuthorized(userId);
+
+      // Always acknowledge the callback to remove the loading spinner
+      await ctx.answerCallbackQuery();
+
+      switch (data) {
+        case "action:identify":
+          if (!authorized) {
+            await bot.api.sendMessage(chatId, "You need to join the community first! Send /join to request access 🌱");
+            return;
+          }
+          await bot.api.sendMessage(chatId, "📸 Send me a photo of a plant, animal, or fungus and I'll try to identify it!");
+          break;
+
+        case "action:forest":
+          if (!authorized) {
+            await bot.api.sendMessage(chatId, "You need to join the community first! Send /join to request access 🌱");
+            return;
+          }
+          await bot.api.sendMessage(chatId, "🌳 Tell me a place name or share your location, and I'll check the forest health for that area!");
+          break;
+
+        case "action:join":
+          if (authorized) {
+            await bot.api.sendMessage(chatId, "You're already part of the community! 🌿");
+          } else {
+            const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
+            const added = addJoinRequest(userId, displayName, from.username);
+            if (added) {
+              await bot.api.sendMessage(chatId, "Got it! I'll let the admins know you want to join 🙌");
+            } else {
+              await bot.api.sendMessage(chatId, "You already have a pending request. Hang tight! ⏳");
+            }
+          }
+          break;
+
+        case "action:restart":
+          resetSession(userId);
+          await ctx.reply(START_WELCOME_TEXT, {
+            parse_mode: "HTML",
+            reply_markup: buildStartKeyboard(),
+          });
+          break;
+
+        default:
+          break;
+      }
+    } catch (err) {
+      console.error("Error in callback_query handler:", err);
+      try {
+        await ctx.answerCallbackQuery({ text: "Something went wrong 🙏" });
+      } catch { /* ignore */ }
     }
   });
 
