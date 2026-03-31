@@ -644,6 +644,21 @@ export function getPendingChart(userId: number): Buffer | undefined {
 // ─── Cleanup ──────────────────────────────────────────────────────────────────
 
 /**
+ * Reset (dispose and remove) the session for a single user.
+ * If no session exists for the given userId, this is a no-op.
+ */
+export function resetSession(userId: number): void {
+  const state = sessions.get(userId);
+  if (!state) return;
+  try {
+    state.session.dispose();
+  } catch (err) {
+    console.error("Error disposing session for user", userId, ":", err);
+  }
+  sessions.delete(userId);
+}
+
+/**
  * Dispose all active agent sessions.
  */
 export async function disposeAllSessions(): Promise<void> {
