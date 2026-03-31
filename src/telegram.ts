@@ -111,24 +111,29 @@ async function downloadTelegramFile(
 
 const START_WELCOME_TEXT =
   `🌿 <b>Hey! I'm Tainá</b> — your community biodiversity assistant.\n\n` +
-  `I can identify plants and animals from photos, check forest health for your area, ` +
-  `and help your community track nature observations.\n\n` +
+  `I can identify species from photos, check forest health, get weather forecasts, ` +
+  `and even configure your AudioMoth recorder.\n\n` +
   `Tap a button below to get started 👇`;
 
 function buildStartKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
-    .text("🌿 Identify a Plant", "action:identify")
-    .text("🌳 Forest Report", "action:forest")
+    .text('🌿 Identify Species', 'action:identify')
+    .text('🌳 Forest Report', 'action:forest')
     .row()
-    .text("🔑 Request Access", "action:join")
-    .text("🔄 Restart Chat", "action:restart");
+    .text('🎙️ AudioMoth Setup', 'action:audiomoth')
+    .text('🌤️ Weather', 'action:weather')
+    .row()
+    .text('🔑 Request Access', 'action:join')
+    .text('🔄 Restart Chat', 'action:restart');
 }
 
 function buildPersistentKeyboard(): Keyboard {
   return new Keyboard()
-    .text("🌿 Identify").text("🌳 Forest")
+    .text('🌿 Identify').text('🌳 Forest')
     .row()
-    .text("📋 Menu").text("🔄 Restart")
+    .text('🎙️ AudioMoth').text('🌤️ Weather')
+    .row()
+    .text('📋 Menu').text('🔄 Restart')
     .resized()
     .persistent();
 }
@@ -235,6 +240,22 @@ export async function createTelegramBot(
           return;
         }
         await ctx.reply("🌳 Tell me a place name or share your location, and I'll check the forest health for that area!");
+        return;
+      }
+      if (persistentAction === '🎙️ AudioMoth') {
+        if (!isAuthorized(user.id)) {
+          await ctx.reply('You need to join the community first! Send /join to request access 🌱');
+          return;
+        }
+        await ctx.reply('🎙️ Let\'s set up your AudioMoth! Share your deployment location or tell me the place name.');
+        return;
+      }
+      if (persistentAction === '🌤️ Weather') {
+        if (!isAuthorized(user.id)) {
+          await ctx.reply('You need to join the community first! Send /join to request access 🌱');
+          return;
+        }
+        await ctx.reply('🌤️ Where do you want to check the weather? Share your location or tell me the place name.');
         return;
       }
 
@@ -480,6 +501,22 @@ export async function createTelegramBot(
             return;
           }
           await bot.api.sendMessage(chatId, "🌳 Tell me a place name or share your location, and I'll check the forest health for that area!");
+          break;
+
+        case 'action:audiomoth':
+          if (!authorized) {
+            await bot.api.sendMessage(chatId, 'You need to join the community first! Send /join to request access 🌱');
+            return;
+          }
+          await bot.api.sendMessage(chatId, '🎙️ Let\'s set up your AudioMoth! Share your deployment location or tell me the place name.');
+          break;
+
+        case 'action:weather':
+          if (!authorized) {
+            await bot.api.sendMessage(chatId, 'You need to join the community first! Send /join to request access 🌱');
+            return;
+          }
+          await bot.api.sendMessage(chatId, '🌤️ Where do you want to check the weather? Share your location or tell me the place name.');
           break;
 
         case "action:join":

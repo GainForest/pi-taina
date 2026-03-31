@@ -21,6 +21,7 @@ import { transcribeVoice } from "./tools/transcribe-voice.js";
 import { queryHyperindex } from "./tools/query-hyperindex.js";
 import { createHypercert } from "./tools/create-hypercert.js";
 import { attachObservations } from "./tools/attach-observations.js";
+import { getWeather } from "./tools/weather.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -164,6 +165,11 @@ const generateChimeSchema = Type.Object({
   latitude: Type.Number({ description: 'GPS latitude for the AudioMoth deployment' }),
   longitude: Type.Number({ description: 'GPS longitude for the AudioMoth deployment' }),
   deploymentId: Type.Optional(Type.String({ description: '16-character hex deployment ID. Random if omitted.' })),
+});
+
+const weatherReportSchema = Type.Object({
+  latitude: Type.Number({ description: 'GPS latitude of the location to check weather for' }),
+  longitude: Type.Number({ description: 'GPS longitude of the location to check weather for' }),
 });
 
 /**
@@ -552,6 +558,20 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const weatherReportTool: ToolDefinition<typeof weatherReportSchema> = {
+    name: 'weather_report',
+    label: 'Weather Report',
+    description: 'Get current weather conditions and a 3-day forecast for a location. Use when the user asks about weather, temperature, rain, wind, or conditions at a location. Useful for planning field work, AudioMoth deployments, or outdoor activities.',
+    parameters: weatherReportSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const result = await getWeather(params.latitude, params.longitude);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
@@ -562,6 +582,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     createHypercertTool as unknown as ToolDefinition,
     attachObservationsTool as unknown as ToolDefinition,
     generateChimeTool as unknown as ToolDefinition,
+    weatherReportTool as unknown as ToolDefinition,
   ];
 }
 
