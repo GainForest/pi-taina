@@ -38,14 +38,24 @@ const HYPERINDEX_URL = 'https://api.hi.gainforest.app/graphql';
 /**
  * Build a hyperscan URL from an AT URI.
  * URIs are typically in the format: at://did:plc:xxx/collection/rkey
- * Hyperscan URL: https://hyperscan.gainforest.app/at/did:plc:xxx/collection/rkey
+ * Hyperscan URL: https://www.hyperscan.dev/data?did=...&collection=...&rkey=...
  */
 function buildHyperscanUrl(uri: string): string {
-  if (uri.startsWith('at://')) {
-    const path = uri.slice('at://'.length);
-    return `https://hyperscan.gainforest.app/at/${path}`;
+  // Convert at:// URI to hyperscan.dev URL
+  // Input: at://did:plc:xxx/app.gainforest.dwc.occurrence/3mieca2au6e2k
+  // Output: https://www.hyperscan.dev/data?did=did%3Aplc%3Axxx&collection=app.gainforest.dwc.occurrence&rkey=3mieca2au6e2k
+  if (uri.startsWith("at://")) {
+    const path = uri.slice("at://".length);
+    const parts = path.split("/");
+    if (parts.length >= 3) {
+      const did = parts[0];
+      const collection = parts[1];
+      const rkey = parts[2];
+      return `https://www.hyperscan.dev/data?did=${encodeURIComponent(did)}&collection=${encodeURIComponent(collection)}&rkey=${encodeURIComponent(rkey)}`;
+    }
   }
-  return `https://hyperscan.gainforest.app/${uri}`;
+  // Fallback
+  return `https://www.hyperscan.dev/data?did=${encodeURIComponent(uri)}`;
 }
 
 interface OccurrenceNode {

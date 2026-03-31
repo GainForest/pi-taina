@@ -64,6 +64,7 @@ export interface PublishResult {
   date: string;
   hasImage: boolean;
   imageCount: number;
+  hyperscanUrl: string;
 }
 
 export interface PublishError {
@@ -258,6 +259,13 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
     return { success: false, error: `Failed to publish occurrence: ${message}` };
   }
 
+  // Build Hyperscan URL from the AT URI
+  const atUri = createResult.data.uri;
+  const uriParts = atUri.slice("at://".length).split("/");
+  const hyperscanUrl = uriParts.length >= 3
+    ? `https://www.hyperscan.dev/data?did=${encodeURIComponent(uriParts[0])}&collection=${encodeURIComponent(uriParts[1])}&rkey=${encodeURIComponent(uriParts[2])}`
+    : `https://www.hyperscan.dev/data?did=${encodeURIComponent(atUri)}`;
+
   // Build human-readable location string for the result
   const locationParts: string[] = [];
   if (hasGps) {
@@ -268,15 +276,16 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
   const location = locationParts.join(", ") || "Unknown location";
 
   return {
-    success: true,
+    success: true as const,
     uri: createResult.data.uri,
     cid: createResult.data.cid,
-    occurrenceID,
-    scientificName: input.scientificName,
-    vernacularName: input.vernacularName,
+    occurrenceID: record.occurrenceID as string,
+    scientificName: record.scientificName as string,
+    vernacularName: record.vernacularName as string | undefined,
     location,
-    date: eventDate,
+    date: record.eventDate as string,
     hasImage,
     imageCount,
+    hyperscanUrl,
   };
 }

@@ -3,7 +3,7 @@
 // extracting locations, and sending responses.
 // Uses grammY for the Telegram Bot API.
 
-import { Bot, InputFile, InlineKeyboard } from "grammy";
+import { Bot, InputFile, InlineKeyboard, Keyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
 import { 
   isAuthorized, isAdmin, 
@@ -124,6 +124,15 @@ function buildStartKeyboard(): InlineKeyboard {
     .text("🔄 Restart Chat", "action:restart");
 }
 
+function buildPersistentKeyboard(): Keyboard {
+  return new Keyboard()
+    .text("🌿 Identify").text("🌳 Forest")
+    .row()
+    .text("📋 Menu").text("🔄 Restart")
+    .resized()
+    .persistent();
+}
+
 // ─── Main Export ─────────────────────────────────────────────────────────────
 
 /**
@@ -182,10 +191,49 @@ export async function createTelegramBot(
       // ── Check for /start BEFORE the access gate (works for all users) ──
       const rawTextForCommand = msg.text ?? msg.caption ?? '';
       if (rawTextForCommand.trim().startsWith("/start")) {
+        // Send welcome with inline buttons
         await ctx.reply(START_WELCOME_TEXT, {
           parse_mode: "HTML",
           reply_markup: buildStartKeyboard(),
         });
+        // Set persistent bottom keyboard
+        await ctx.reply("⌨️ Quick actions are always available below 👇", {
+          reply_markup: buildPersistentKeyboard(),
+        });
+        return;
+      }
+
+      // ── Persistent keyboard shortcuts ──
+      const persistentAction = rawTextForCommand.trim();
+      if (persistentAction === "📋 Menu") {
+        await ctx.reply(START_WELCOME_TEXT, {
+          parse_mode: "HTML",
+          reply_markup: buildStartKeyboard(),
+        });
+        return;
+      }
+      if (persistentAction === "🔄 Restart") {
+        resetSession(user.id);
+        await ctx.reply(START_WELCOME_TEXT, {
+          parse_mode: "HTML",
+          reply_markup: buildStartKeyboard(),
+        });
+        return;
+      }
+      if (persistentAction === "🌿 Identify") {
+        if (!isAuthorized(user.id)) {
+          await ctx.reply("You need to join the community first! Send /join to request access 🌱");
+          return;
+        }
+        await ctx.reply("📸 Send me a photo of a plant, animal, or fungus and I'll try to identify it!");
+        return;
+      }
+      if (persistentAction === "🌳 Forest") {
+        if (!isAuthorized(user.id)) {
+          await ctx.reply("You need to join the community first! Send /join to request access 🌱");
+          return;
+        }
+        await ctx.reply("🌳 Tell me a place name or share your location, and I'll check the forest health for that area!");
         return;
       }
 
@@ -452,6 +500,9 @@ export async function createTelegramBot(
           await ctx.reply(START_WELCOME_TEXT, {
             parse_mode: "HTML",
             reply_markup: buildStartKeyboard(),
+          });
+          await bot.api.sendMessage(chatId, "⌨️ Quick actions are always available below 👇", {
+            reply_markup: buildPersistentKeyboard(),
           });
           break;
 

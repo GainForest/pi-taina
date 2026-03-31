@@ -23,6 +23,7 @@ export interface SpeciesIdentification {
     class: string;
     order: string;
     family: string;
+    genus: string;
   };
   confidence: "high" | "medium" | "low";
   conservationStatus: string;
@@ -68,7 +69,8 @@ Return a JSON object with the following structure (no markdown, just raw JSON):
     "phylum": "e.g. Chordata, Tracheophyta",
     "class": "e.g. Aves, Mammalia, Insecta",
     "order": "e.g. Passeriformes",
-    "family": "e.g. Fringillidae"
+    "family": "e.g. Fringillidae",
+    "genus": "taxonomic genus (e.g. Dracaena, Panthera)"
   },
   "confidence": "high | medium | low",
   "conservationStatus": "e.g. Least Concern (IUCN), Endangered, Not Evaluated",
@@ -215,6 +217,7 @@ export async function identifySpecies(
           class: "Unknown",
           order: "Unknown",
           family: "Unknown",
+          genus: "Unknown",
         },
         confidence: "low",
         conservationStatus: "Not Evaluated",
