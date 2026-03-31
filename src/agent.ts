@@ -29,6 +29,7 @@ interface SessionState {
   photos: Array<{ data: Buffer; mimeType: string }>;
   currentUser?: TelegramUser;
   pendingChart?: Buffer;
+  pendingAudio?: { data: Buffer; filename: string; caption: string };
 }
 
 // ─── Module-level singletons ──────────────────────────────────────────────────
@@ -157,6 +158,12 @@ const attachObservationsSchema = Type.Object({
   hypercertCid: Type.String({ description: 'CID of the hypercert record (from create_hypercert result)' }),
   sinceDate: Type.Optional(Type.String({ description: 'Only include observations recorded after this date (ISO 8601)' })),
   limit: Type.Optional(Type.Number({ description: 'Max observations to attach (default 100, max 200)' })),
+});
+
+const generateChimeSchema = Type.Object({
+  latitude: Type.Number({ description: 'GPS latitude for the AudioMoth deployment' }),
+  longitude: Type.Number({ description: 'GPS longitude for the AudioMoth deployment' }),
+  deploymentId: Type.Optional(Type.String({ description: '16-character hex deployment ID. Random if omitted.' })),
 });
 
 /**
@@ -471,6 +478,80 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const generateChimeTool: ToolDefinition<typeof generateChimeSchema> = {
+    name: 'generate_audiomoth_chime',
+    label: 'Generate AudioMoth Chime',
+    description: 'Generate a WAV audio chime to configure an AudioMoth bioacoustic recorder. The chime encodes the current UTC timestamp, GPS coordinates, and a deployment ID. The user plays it near the AudioMoth microphone to sync the device. Use when the user mentions AudioMoth, wants to set up a recorder, or asks for a chime.',
+    parameters: generateChimeSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const { execFile } = await import('node:child_process');
+      const { promisify } = await import('node:util');
+      const fs = await import('node:fs/promises');
+      const path = await import('node:path');
+      const execFileAsync = promisify(execFile);
+
+      const scriptPath = path.join(process.cwd(), 'skills', 'audiomoth-chime', 'generate-chime.py');
+      const outputPath = `/tmp/audiomoth-chime-${Date.now()}.wav`;
+
+      const args = [
+        scriptPath,
+        '--lat', String(params.latitude),
+        '--lng', String(params.longitude),
+        '--output', outputPath,
+      ];
+      if (params.deploymentId) {
+        args.push('--deployment-id', params.deploymentId);
+      }
+
+      try {
+        const { stdout, stderr } = await execFileAsync('python3', args, { timeout: 15000 });
+        const wavBuffer = await fs.readFile(outputPath);
+
+        // Clean up temp file
+        await fs.unlink(outputPath).catch(() => {});
+
+        // Parse deployment ID from stdout (line: "[chime] Deployment ID: <hex>")
+        const depMatch = (stdout + stderr).match(/Deployment ID:\s*([0-9a-f]{16})/i);
+        const deploymentId = depMatch ? depMatch[1] : params.deploymentId ?? 'unknown';
+
+        // Store audio for Telegram layer to send
+        stateRef.state.pendingAudio = {
+          data: wavBuffer,
+          filename: `audiomoth-chime-${deploymentId}.wav`,
+          caption: '🎵 AudioMoth configuration chime',
+        };
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: true,
+              deploymentId,
+              latitude: params.latitude,
+              longitude: params.longitude,
+              message: 'Chime generated. The WAV file will be sent as an audio message. Tell the user to play it near their AudioMoth microphone.',
+              diagnostics: (stdout + stderr).trim(),
+            }),
+          }],
+          details: {},
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: false,
+              error: `Chime generation failed: ${message}`,
+              suggestion: 'Check that python3 is available and the generate-chime.py script exists.',
+            }),
+          }],
+          details: {},
+        };
+      }
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
@@ -480,6 +561,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     queryHyperindexTool as unknown as ToolDefinition,
     createHypercertTool as unknown as ToolDefinition,
     attachObservationsTool as unknown as ToolDefinition,
+    generateChimeTool as unknown as ToolDefinition,
   ];
 }
 
@@ -637,6 +719,22 @@ export function getPendingChart(userId: number): Buffer | undefined {
     const chart = state.pendingChart;
     state.pendingChart = undefined; // consume it
     return chart;
+  }
+  return undefined;
+}
+
+// ─── Pending audio ────────────────────────────────────────────────────────────
+
+/**
+ * Consume and return the pending audio file for a user (one-time use).
+ * Returns undefined if no audio is pending.
+ */
+export function getPendingAudio(userId: number): { data: Buffer; filename: string; caption: string } | undefined {
+  const state = sessions.get(userId);
+  if (state?.pendingAudio) {
+    const audio = state.pendingAudio;
+    state.pendingAudio = undefined; // consume it
+    return audio;
   }
   return undefined;
 }

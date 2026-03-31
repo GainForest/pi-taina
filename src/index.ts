@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { loadEnvConfig, isAtprotoConfigured, isGfwConfigured } from "./env.js";
 import { createTelegramBot } from "./telegram.js";
-import { sendToAgent, disposeAllSessions, getPendingChart } from "./agent.js";
+import { sendToAgent, disposeAllSessions, getPendingChart, getPendingAudio } from "./agent.js";
 import { getAtprotoAgent, getCommunityDid } from "./atproto.js";
 import { initOrgContext } from "./hyperindex.js";
 import { initWhitelist } from './whitelist.js';
@@ -66,6 +66,12 @@ async function main() {
         const pendingChart = getPendingChart(msg.user.id);
         if (pendingChart) {
           await bot.sendPhoto(msg.chatId, pendingChart, "📊 Tree Cover Loss — Data: Global Forest Watch");
+        }
+
+        // Send pending audio file if available (best-effort)
+        const pendingAudio = getPendingAudio(msg.user.id);
+        if (pendingAudio) {
+          await bot.sendAudio(msg.chatId, pendingAudio.data, pendingAudio.filename, pendingAudio.caption);
         }
       } finally {
         clearInterval(typingInterval);

@@ -155,6 +155,7 @@ export async function createTelegramBot(
     }
   ) => Promise<void>;
   sendPhoto: (chatId: number, photo: Buffer, caption?: string) => Promise<void>;
+  sendAudio: (chatId: number, audio: Buffer, filename: string, caption?: string) => Promise<void>;
   sendTyping: (chatId: number) => Promise<void>;
   stop: () => void;
 }> {
@@ -576,6 +577,17 @@ export async function createTelegramBot(
     });
   };
 
+  const sendAudio = async (
+    chatId: number,
+    audio: Buffer,
+    filename: string,
+    caption?: string
+  ): Promise<void> => {
+    await bot.api.sendAudio(chatId, new InputFile(audio, filename), {
+      caption,
+    });
+  };
+
   const sendTyping = async (chatId: number): Promise<void> => {
     try {
       await bot.api.sendChatAction(chatId, "typing");
@@ -588,5 +600,5 @@ export async function createTelegramBot(
     bot.stop();
   };
 
-  return { reply, sendPhoto, sendTyping, stop };
+  return { reply, sendPhoto, sendAudio, sendTyping, stop };
 }
