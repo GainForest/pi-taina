@@ -13,7 +13,7 @@ export interface TranscriptionError {
 
 export type TranscriptionResult = TranscriptionSuccess | TranscriptionError;
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.1-pro-preview";
 
 const TRANSCRIPTION_PROMPT =
   "Transcribe exactly as spoken, preserve language, return only the transcription with no additional commentary or formatting.";
