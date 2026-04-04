@@ -55,7 +55,7 @@ export interface IdentificationError {
 
 export type IdentificationResult = SpeciesIdentification | IdentificationError;
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_MODEL = "gemini-3.1-pro-preview";
 
 const IDENTIFICATION_PROMPT = `You are an expert naturalist and biodiversity scientist. Analyze this photo and identify the organism shown.
 

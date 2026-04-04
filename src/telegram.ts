@@ -231,7 +231,16 @@ export async function createTelegramBot(
           await ctx.reply("You need to join the community first! Send /join to request access 🌱");
           return;
         }
-        await ctx.reply("📸 Send me a photo of a plant, animal, or fungus and I'll try to identify it!");
+        const incoming: IncomingMessage = {
+          chatId: msg.chat.id,
+          messageId: msg.message_id,
+          text: `The user tapped the "🌿 Identify" quick-action button. They want to identify a species from a photo. Guide them on what to provide next (photo, location, etc).`,
+          user,
+          isGroup,
+          isMentioned: false,
+          isAdmin: isAdmin(user.id),
+        };
+        await onMessage(incoming);
         return;
       }
       if (persistentAction === "🌳 Forest") {
@@ -239,7 +248,16 @@ export async function createTelegramBot(
           await ctx.reply("You need to join the community first! Send /join to request access 🌱");
           return;
         }
-        await ctx.reply("🌳 Tell me a place name or share your location, and I'll check the forest health for that area!");
+        const incoming: IncomingMessage = {
+          chatId: msg.chat.id,
+          messageId: msg.message_id,
+          text: `The user tapped the "🌳 Forest" quick-action button. They want to get a forest health report for a location. Guide them on what to provide next (photo, location, etc).`,
+          user,
+          isGroup,
+          isMentioned: false,
+          isAdmin: isAdmin(user.id),
+        };
+        await onMessage(incoming);
         return;
       }
       if (persistentAction === '🎙️ AudioMoth') {
@@ -247,7 +265,16 @@ export async function createTelegramBot(
           await ctx.reply('You need to join the community first! Send /join to request access 🌱');
           return;
         }
-        await ctx.reply('🎙️ Let\'s set up your AudioMoth! Share your deployment location or tell me the place name.');
+        const incoming: IncomingMessage = {
+          chatId: msg.chat.id,
+          messageId: msg.message_id,
+          text: `The user tapped the "🎙️ AudioMoth" quick-action button. They want to set up an AudioMoth bioacoustic recorder. Guide them on what to provide next (photo, location, etc).`,
+          user,
+          isGroup,
+          isMentioned: false,
+          isAdmin: isAdmin(user.id),
+        };
+        await onMessage(incoming);
         return;
       }
       if (persistentAction === '🌤️ Weather') {
@@ -255,7 +282,16 @@ export async function createTelegramBot(
           await ctx.reply('You need to join the community first! Send /join to request access 🌱');
           return;
         }
-        await ctx.reply('🌤️ Where do you want to check the weather? Share your location or tell me the place name.');
+        const incoming: IncomingMessage = {
+          chatId: msg.chat.id,
+          messageId: msg.message_id,
+          text: `The user tapped the "🌤️ Weather" quick-action button. They want to check the weather forecast for a location. Guide them on what to provide next (photo, location, etc).`,
+          user,
+          isGroup,
+          isMentioned: false,
+          isAdmin: isAdmin(user.id),
+        };
+        await onMessage(incoming);
         return;
       }
 
@@ -487,37 +523,81 @@ export async function createTelegramBot(
       await ctx.answerCallbackQuery();
 
       switch (data) {
-        case "action:identify":
+        case "action:identify": {
           if (!authorized) {
             await bot.api.sendMessage(chatId, "You need to join the community first! Send /join to request access 🌱");
             return;
           }
-          await bot.api.sendMessage(chatId, "📸 Send me a photo of a plant, animal, or fungus and I'll try to identify it!");
+          const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
+          const incoming: IncomingMessage = {
+            chatId,
+            messageId: ctx.callbackQuery.message?.message_id ?? 0,
+            text: `The user tapped the "🌿 Identify Species" quick-action button. They want to identify a species from a photo. Guide them on what to provide next.`,
+            user: { id: userId, username: from.username, displayName },
+            isGroup: false,
+            isMentioned: false,
+            isAdmin: isAdmin(userId),
+          };
+          await onMessage(incoming);
           break;
+        }
 
-        case "action:forest":
+        case "action:forest": {
           if (!authorized) {
             await bot.api.sendMessage(chatId, "You need to join the community first! Send /join to request access 🌱");
             return;
           }
-          await bot.api.sendMessage(chatId, "🌳 Tell me a place name or share your location, and I'll check the forest health for that area!");
+          const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
+          const incoming: IncomingMessage = {
+            chatId,
+            messageId: ctx.callbackQuery.message?.message_id ?? 0,
+            text: `The user tapped the "🌳 Forest Report" quick-action button. They want to get a forest health report for a location. Guide them on what to provide next.`,
+            user: { id: userId, username: from.username, displayName },
+            isGroup: false,
+            isMentioned: false,
+            isAdmin: isAdmin(userId),
+          };
+          await onMessage(incoming);
           break;
+        }
 
-        case 'action:audiomoth':
+        case 'action:audiomoth': {
           if (!authorized) {
             await bot.api.sendMessage(chatId, 'You need to join the community first! Send /join to request access 🌱');
             return;
           }
-          await bot.api.sendMessage(chatId, '🎙️ Let\'s set up your AudioMoth! Share your deployment location or tell me the place name.');
+          const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
+          const incoming: IncomingMessage = {
+            chatId,
+            messageId: ctx.callbackQuery.message?.message_id ?? 0,
+            text: `The user tapped the "🎙️ AudioMoth Setup" quick-action button. They want to set up an AudioMoth bioacoustic recorder. Guide them on what to provide next.`,
+            user: { id: userId, username: from.username, displayName },
+            isGroup: false,
+            isMentioned: false,
+            isAdmin: isAdmin(userId),
+          };
+          await onMessage(incoming);
           break;
+        }
 
-        case 'action:weather':
+        case 'action:weather': {
           if (!authorized) {
             await bot.api.sendMessage(chatId, 'You need to join the community first! Send /join to request access 🌱');
             return;
           }
-          await bot.api.sendMessage(chatId, '🌤️ Where do you want to check the weather? Share your location or tell me the place name.');
+          const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
+          const incoming: IncomingMessage = {
+            chatId,
+            messageId: ctx.callbackQuery.message?.message_id ?? 0,
+            text: `The user tapped the "🌤️ Weather" quick-action button. They want to check the weather forecast for a location. Guide them on what to provide next.`,
+            user: { id: userId, username: from.username, displayName },
+            isGroup: false,
+            isMentioned: false,
+            isAdmin: isAdmin(userId),
+          };
+          await onMessage(incoming);
           break;
+        }
 
         case "action:join":
           if (authorized) {
