@@ -22,6 +22,7 @@ import { queryHyperindex } from "./tools/query-hyperindex.js";
 import { createHypercert } from "./tools/create-hypercert.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
+import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -170,6 +171,13 @@ const generateChimeSchema = Type.Object({
 const weatherReportSchema = Type.Object({
   latitude: Type.Number({ description: 'GPS latitude of the location to check weather for' }),
   longitude: Type.Number({ description: 'GPS longitude of the location to check weather for' }),
+});
+
+const nearbySpeciesSchema = Type.Object({
+  latitude: Type.Number({ description: 'GPS latitude of the location to search around' }),
+  longitude: Type.Number({ description: 'GPS longitude of the location to search around' }),
+  radiusKm: Type.Optional(Type.Number({ description: 'Search radius in km (default 50, max 500)' })),
+  limit: Type.Optional(Type.Number({ description: 'Max species to return (default 20, max 50)' })),
 });
 
 /**
@@ -572,6 +580,25 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const nearbySpeciesTool: ToolDefinition<typeof nearbySpeciesSchema> = {
+    name: 'nearby_species',
+    label: 'Nearby Species',
+    description: 'Search iNaturalist for species observed near a GPS location. Returns a ranked list of species by observation count. Use when the user asks what species live near them, what animals/plants are in an area, or wants to explore local biodiversity. Requires GPS coordinates — ask the user to share their location first if not available.',
+    parameters: nearbySpeciesSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const result = await getSpeciesNearLocation(
+        params.latitude,
+        params.longitude,
+        params.radiusKm,
+        params.limit,
+      );
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
@@ -583,6 +610,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     attachObservationsTool as unknown as ToolDefinition,
     generateChimeTool as unknown as ToolDefinition,
     weatherReportTool as unknown as ToolDefinition,
+    nearbySpeciesTool as unknown as ToolDefinition,
   ];
 }
 

@@ -2,6 +2,7 @@
 // Analyzes a photo and returns structured species identification data
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getTaxonByName, type INatTaxon } from './inaturalist-api.js';
 
 export interface ImageQuality {
   overall: "excellent" | "good" | "fair" | "poor";
@@ -46,6 +47,23 @@ export interface SpeciesIdentification {
   imageQuality: ImageQuality;
   isWildlife: boolean;
   nonWildlifeReason?: string;
+  iNaturalist?: INatEnrichment;
+}
+
+export interface INatEnrichment {
+  matched: boolean;
+  taxonId: number | null;
+  observationsCount: number | null;
+  wikipediaUrl: string | null;
+  iNatUrl: string | null;           // https://www.inaturalist.org/taxa/{id}
+  photoUrl: string | null;           // medium-size photo URL
+  photoAttribution: string | null;
+  threatened: boolean;
+  conservationStatus: {
+    code: string;        // 'CR', 'EN', 'VU', 'NT', 'LC' (uppercased)
+    authority: string;
+    label: string;       // human-readable: 'Critically Endangered', 'Endangered', etc.
+  } | null;
 }
 
 export interface IdentificationError {
@@ -54,6 +72,47 @@ export interface IdentificationError {
 }
 
 export type IdentificationResult = SpeciesIdentification | IdentificationError;
+
+function iucnLabel(code: string): string {
+  const labels: Record<string, string> = {
+    'CR': 'Critically Endangered',
+    'EN': 'Endangered',
+    'VU': 'Vulnerable',
+    'NT': 'Near Threatened',
+    'LC': 'Least Concern',
+    'DD': 'Data Deficient',
+    'NE': 'Not Evaluated',
+  };
+  return labels[code.toUpperCase()] ?? code;
+}
+
+async function enrichWithINaturalist(scientificName: string): Promise<INatEnrichment> {
+  try {
+    const taxon = await getTaxonByName(scientificName);
+    if (!taxon) {
+      return { matched: false, taxonId: null, observationsCount: null, wikipediaUrl: null, iNatUrl: null, photoUrl: null, photoAttribution: null, threatened: false, conservationStatus: null };
+    }
+    const code = taxon.conservationStatus?.status?.toUpperCase() ?? null;
+    return {
+      matched: true,
+      taxonId: taxon.id,
+      observationsCount: taxon.observationsCount,
+      wikipediaUrl: taxon.wikipediaUrl,
+      iNatUrl: `https://www.inaturalist.org/taxa/${taxon.id}`,
+      photoUrl: taxon.defaultPhoto?.mediumUrl ?? null,
+      photoAttribution: taxon.defaultPhoto?.attribution ?? null,
+      threatened: taxon.threatened || ['CR', 'EN', 'VU'].includes(code ?? ''),
+      conservationStatus: code ? {
+        code,
+        authority: taxon.conservationStatus!.authority,
+        label: iucnLabel(code),
+      } : null,
+    };
+  } catch {
+    // Enrichment is best-effort — never fail the identification
+    return { matched: false, taxonId: null, observationsCount: null, wikipediaUrl: null, iNatUrl: null, photoUrl: null, photoAttribution: null, threatened: false, conservationStatus: null };
+  }
+}
 
 const DEFAULT_MODEL = "gemini-3.1-pro-preview";
 
@@ -205,6 +264,10 @@ export async function identifySpecies(
 
     try {
       const parsed = JSON.parse(rawText) as SpeciesIdentification;
+      // Enrich with iNaturalist data (best-effort, non-blocking for error)
+      if (parsed.scientificName && parsed.scientificName !== 'Unknown') {
+        parsed.iNaturalist = await enrichWithINaturalist(parsed.scientificName);
+      }
       return parsed;
     } catch {
       // JSON parse failed — return a partial result with defaults
