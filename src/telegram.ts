@@ -7,7 +7,7 @@ import { Bot, InputFile, InlineKeyboard, Keyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
 import { 
   isAuthorized, isAdmin, 
-  addJoinRequest, approveRequest, 
+  addJoinRequest, approveRequest, denyRequest,
   getPendingRequests, addMember, removeMember, getMembers 
 } from './whitelist.js';
 import { resetSession } from "./agent.js";
@@ -329,7 +329,23 @@ export async function createTelegramBot(
         }
         const targetId = parseInt(rawTextForCommand.trim().split(/\s+/)[1], 10);
         if (isNaN(targetId)) {
-          await ctx.reply('Usage: /approve <user_id>\nCheck /pending for pending requests.');
+          // No ID provided — auto-approve if exactly 1 pending request
+          const requests = getPendingRequests();
+          if (requests.length === 1) {
+            const req = requests[0];
+            const approved = approveRequest(req.userId, user.id);
+            if (approved) {
+              const name = req.displayName + (req.username ? ` (@${req.username})` : "");
+              await ctx.reply(`✅ ${name} approved! They can now use the bot.`);
+              try {
+                await bot.api.sendMessage(req.userId, "Welcome to the community! You can now talk to me 🌿🎉");
+              } catch { /* user may not have started DM with bot */ }
+            }
+          } else if (requests.length === 0) {
+            await ctx.reply("No pending requests to approve 👍");
+          } else {
+            await ctx.reply(`There are ${requests.length} pending requests. Use /pending to see them and approve individually.`);
+          }
           return;
         }
         const approved = approveRequest(targetId, user.id);
@@ -372,17 +388,21 @@ export async function createTelegramBot(
 
       if (rawTextForCommand.trim().startsWith('/pending')) {
         if (!isAdmin(user.id)) {
-          await ctx.reply('Only admins can view pending requests.');
+          await ctx.reply("Only admins can view pending requests.");
           return;
         }
         const requests = getPendingRequests();
         if (requests.length === 0) {
-          await ctx.reply('No pending requests 👍');
+          await ctx.reply("No pending requests 👍");
         } else {
-          const lines = requests.map(r => 
-            `• ${r.displayName}${r.username ? ` (@${r.username})` : ''} — ID: ${r.userId}`
-          );
-          await ctx.reply(`Pending requests:\n${lines.join('\n')}\n\nUse /approve <user_id> to approve.`);
+          await ctx.reply(`📋 <b>${requests.length} pending request${requests.length > 1 ? "s" : ""}:</b>`, { parse_mode: "HTML" });
+          for (const r of requests) {
+            const name = r.displayName + (r.username ? ` (@${r.username})` : "");
+            const keyboard = new InlineKeyboard()
+              .text("✅ Approve", `admin:approve:${r.userId}`)
+              .text("❌ Deny", `admin:deny:${r.userId}`);
+            await ctx.reply(name, { reply_markup: keyboard });
+          }
         }
         return;
       }
@@ -624,8 +644,53 @@ export async function createTelegramBot(
           });
           break;
 
-        default:
+        default: {
+          // Handle admin:approve:<userId> and admin:deny:<userId> callbacks
+          if (data.startsWith("admin:approve:") || data.startsWith("admin:deny:")) {
+            if (!isAdmin(userId)) {
+              await ctx.answerCallbackQuery({ text: "Only admins can do this" });
+              return;
+            }
+            const parts = data.split(":");
+            const action = parts[1]; // "approve" or "deny"
+            const targetId = parseInt(parts[2], 10);
+            if (isNaN(targetId)) break;
+
+            if (action === "approve") {
+              const approved = approveRequest(targetId, userId);
+              if (approved) {
+                // Edit the original message to show it was approved
+                try {
+                  await ctx.editMessageText(`✅ Approved!`, { reply_markup: undefined });
+                } catch { /* message may be too old to edit */ }
+                try {
+                  await bot.api.sendMessage(targetId, "Welcome to the community! You can now talk to me 🌿🎉");
+                } catch { /* user may not have started DM with bot */ }
+              } else {
+                // Not in pending — try direct add
+                const added = addMember(targetId, userId);
+                if (added) {
+                  try {
+                    await ctx.editMessageText(`✅ Added as member`, { reply_markup: undefined });
+                  } catch { /* ignore */ }
+                } else {
+                  await ctx.answerCallbackQuery({ text: "Already a member" });
+                }
+              }
+            } else if (action === "deny") {
+              const denied = denyRequest(targetId);
+              if (denied) {
+                try {
+                  await ctx.editMessageText(`❌ Denied`, { reply_markup: undefined });
+                } catch { /* ignore */ }
+              } else {
+                await ctx.answerCallbackQuery({ text: "Request not found" });
+              }
+            }
+            return;
+          }
           break;
+        }
       }
     } catch (err) {
       console.error("Error in callback_query handler:", err);
