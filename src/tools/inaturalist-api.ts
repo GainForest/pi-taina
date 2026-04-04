@@ -218,7 +218,7 @@ export async function getSpeciesNearLocation(
 export async function getTaxonByName(
   scientificName: string
 ): Promise<INatTaxon | null> {
-  const result = await searchTaxa(scientificName, 1);
+  const result = await searchTaxa(scientificName, 10);
   if (!result.success) {
     return null;
   }
