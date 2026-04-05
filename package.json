@@ -12,7 +12,8 @@
     "test:smoke": "tsx src/test-smoke.ts"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "latest",
+    "@mariozechner/pi-coding-agent": "0.57.1",
+    "@sinclair/typebox": "^0.34.48",
     "grammy": "^1.31.0",
     "@atproto/api": "^0.13.23",
     "@google/generative-ai": "^0.24.0",
