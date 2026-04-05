@@ -46,6 +46,12 @@ fi
 info "Platform: ${PLATFORM} (${ARCH})"
 echo ""
 
+# Check if we can actually read from /dev/tty (not just if the file exists)
+HAS_TTY=false
+if (exec < /dev/tty) 2>/dev/null; then
+  HAS_TTY=true
+fi
+
 # --------------- 2. Check/install Node.js 20+ ---------------
 info "🔍 Checking Node.js..."
 
@@ -154,20 +160,69 @@ else
     exit 1
   fi
   cp .env.example .env
+
   echo ""
-  info "📝 Created .env from template. You need to set these 3 values:"
+  info "📝 Let's configure your bot. You'll need 3 things:"
   echo ""
-  info "  1. TELEGRAM_BOT_TOKEN — get from @BotFather on Telegram"
-  info "  2. GEMINI_API_KEY     — get from https://aistudio.google.com/apikey"
-  info "  3. ADMIN_USER_ID      — get from @userinfobot on Telegram"
+  info "  1. 🤖 Telegram Bot Token — message @BotFather on Telegram, send /newbot"
+  info "  2. 🔑 Gemini API Key     — get from https://aistudio.google.com/apikey"
+  info "  3. 👤 Your Telegram ID    — message @userinfobot on Telegram"
   echo ""
-  info "  Edit .env with: nano .env"
+  info "  Press Enter to skip any value — you can always edit .env later."
+  echo ""
+
+  # Read from /dev/tty so it works even if script is piped
+  prompt_var() {
+    local var_name="$1"
+    local prompt_text="$2"
+    local value=""
+    printf "%s" "$prompt_text"
+    if [ "$HAS_TTY" = true ]; then
+      read -r value < /dev/tty || value=""
+    else
+      value=""
+    fi
+    if [ -n "$value" ]; then
+      # Use | as sed delimiter to avoid issues with / in tokens
+      if [ "$PLATFORM" = "macOS" ]; then
+        sed -i '' "s|^${var_name}=.*|${var_name}=${value}|" .env
+      else
+        sed -i "s|^${var_name}=.*|${var_name}=${value}|" .env
+      fi
+      ok "  ✅ ${var_name} set"
+    else
+      info "  ⏭️  Skipped ${var_name}"
+    fi
+  }
+
+  prompt_var "TELEGRAM_BOT_TOKEN" "🤖 Telegram Bot Token: "
+  prompt_var "GEMINI_API_KEY" "🔑 Gemini API Key: "
+  prompt_var "ADMIN_USER_ID" "👤 Your Telegram User ID: "
+
+  echo ""
+
+  # Check if all 3 required vars are set
+  MISSING=0
+  grep -q "^TELEGRAM_BOT_TOKEN=$" .env && MISSING=$((MISSING + 1))
+  grep -q "^GEMINI_API_KEY=$" .env && MISSING=$((MISSING + 1))
+  grep -q "^ADMIN_USER_ID=$" .env && MISSING=$((MISSING + 1))
+
+  if [ "$MISSING" -eq 0 ]; then
+    ok "✅ All required variables configured!"
+  else
+    warn "⚠️  ${MISSING} required variable(s) still empty. Edit .env before starting:"
+    info "    nano .env"
+  fi
 fi
 
 # --------------- 6. Optional: install pm2 ---------------
 echo ""
 warn "Install pm2 for always-on service mode? (recommended for Mac Mini / RPi) [y/N]"
-read -r PM2_ANSWER </dev/tty || PM2_ANSWER="n"
+if [ "$HAS_TTY" = true ]; then
+  read -r PM2_ANSWER < /dev/tty || PM2_ANSWER="n"
+else
+  PM2_ANSWER="n"
+fi
 
 case "$PM2_ANSWER" in
   [yY]|[yY][eE][sS])
