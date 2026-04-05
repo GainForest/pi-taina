@@ -24,18 +24,18 @@ Pi-Tainá is part of the [GainForest](https://gainforest.earth) network.
 
 ## Quick Start
 
-**Prerequisites:** Node.js 20+, npm
+**Prerequisites:** Node.js 20+, npm, Python 3 (for AudioMoth chime generation)
 
-1. Clone the repository:
+> **Fastest way:** Run `./setup.sh` — it installs everything automatically on macOS and Raspberry Pi.
+
+1. Clone and setup:
    ```bash
    git clone https://github.com/gainforest/pi-taina.git
    cd pi-taina
+   ./setup.sh
    ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+   The setup script installs Node.js, Python 3, and npm dependencies automatically.
+   It also creates `.env` from the template if it doesn't exist.
 
 3. Copy the example environment file and fill in your values:
    ```bash
@@ -75,6 +75,9 @@ Copy `.env.example` to `.env` and set the following variables:
 | `PI_CACHE_RETENTION` | No | Set to `long` for extended prompt cache retention |
 | `PI_SKIP_VERSION_CHECK` | No | Set to `1` to skip Pi version check at startup |
 | `GFW_DATA_API_KEY` | No | Global Forest Watch Data API key for forest monitoring features. Get free at [data-api.globalforestwatch.org](https://data-api.globalforestwatch.org) |
+| `iNaturalist_API_KEY` | No | iNaturalist API token for species enrichment and higher rate limits. Get from [inaturalist.org/users/api_token](https://www.inaturalist.org/users/api_token). Read-only — write access requires OAuth2 (see PARTNER-153) |
+
+> **Minimum to boot:** You only need `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, and `ADMIN_USER_ID`. All other features degrade gracefully with console warnings.
 
 ---
 
@@ -150,12 +153,15 @@ Skills are documents that teach Tainá how to use each tool. They live in `skill
 
 | Skill | Description |
 |---|---|
-| `species-identification/` | How to identify species from photos with Gemini vision |
+| `species-identification/` | How to identify species from photos with Gemini vision + iNaturalist enrichment |
 | `publish-observation/` | How to publish a Darwin Core occurrence record to ATProto |
 | `forest-monitoring/` | How to generate forest health reports from GFW data |
 | `geocoding/` | How to convert place names to GPS coordinates |
 | `hyperindex/` | How to query the Hypersphere network for records and hypercerts |
 | `hypercerts/` | How to create hypercerts and attach observations as evidence |
+| `audiomoth-chime/` | How to generate AudioMoth configuration chimes |
+| `nearby-species/` | How to search for species near a location using iNaturalist |
+| `weather/` | How to provide weather forecasts via Open-Meteo |
 
 Tainá can also **build new skills on demand** — if a community member asks for something Tainá can't do yet, she can write and save a new skill in the `./skills/` directory.
 
@@ -218,6 +224,9 @@ flowchart TD
         HC["🏆 create_hypercert\n(Bumicerts)"]
         AO["📎 attach_observations"]
         TV["🎤 transcribe_voice\n(Gemini)"]
+        WX["🌤️ weather_report\n(Open-Meteo)"]
+        NS["🦎 nearby_species\n(iNaturalist)"]
+        AM["🔊 audiomoth_chime\n(Python)"]
     end
     
     PUB -->|"Darwin Core record"| ATP["🦋 ATProto PDS\n(community account)"]
@@ -225,6 +234,8 @@ flowchart TD
     AO -->|"evidence link"| ATP
     QH -->|"GraphQL query"| HI["🌐 Hyperindex API\n(GainForest)"]
     GFW -->|"REST API"| GFWAPI["🛰️ GFW Data API"]
+    NS -->|"REST API"| INAT["🔬 iNaturalist API\n(public, read-only)"]
+    WX -->|"REST API"| METEO["🌤️ Open-Meteo API"]
 ```
 
 ### Message Flow
@@ -310,14 +321,16 @@ pi-taina/
 │   ├── hyperindex.ts         # Hyperindex GraphQL client (org context)
 │   ├── whitelist.ts          # Local-first access control (JSON whitelist)
 │   └── tools/
-│       ├── identify-species.ts    # Species ID via Gemini vision
+│       ├── identify-species.ts    # Species ID via Gemini vision + iNaturalist enrichment
+│       ├── inaturalist-api.ts     # iNaturalist v1 API client (species search, nearby, conservation)
 │       ├── publish-occurrence.ts  # Darwin Core → ATProto
 │       ├── geocode-location.ts    # Place name → GPS coordinates
 │       ├── gfw-api.ts             # GFW Data API (tree cover, fire, deforestation)
 │       ├── gfw-chart.ts           # Tree cover loss chart image generator
+│       ├── weather.ts             # Weather forecasts via Open-Meteo
 │       ├── transcribe-voice.ts    # Voice note → text (Gemini)
 │       ├── query-hyperindex.ts    # Search Hypersphere network
-│       ├── create-hypercert.ts     # Create hypercert records
+│       ├── create-hypercert.ts    # Create hypercert records
 │       └── attach-observations.ts # Link observations to hypercerts
 ├── skills/                   # Agent skills (one subdirectory per skill)
 │   ├── species-identification/
@@ -325,11 +338,16 @@ pi-taina/
 │   ├── forest-monitoring/
 │   ├── geocoding/
 │   ├── hyperindex/
-│   └── hypercerts/
+│   ├── hypercerts/
+│   ├── audiomoth-chime/
+│   ├── nearby-species/
+│   └── weather/
 ├── data/
 │   ├── sessions/             # Per-user agent session state (gitignored)
 │   └── whitelist.json        # Community member whitelist (gitignored)
 ├── .env.example              # Environment variable template
+├── setup.sh                  # Cross-platform setup script (macOS + Raspberry Pi)
+├── .nvmrc                    # Node.js version for nvm/fnm
 └── package.json
 ```
 
