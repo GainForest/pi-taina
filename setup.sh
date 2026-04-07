@@ -270,25 +270,78 @@ else
   fi
 fi
 
-# --------------- 6. Optional: install pm2 ---------------
+# --------------- 6. Optional: always-on service ---------------
 echo ""
-warn "Install pm2 for always-on service mode? (recommended for Mac Mini / RPi) [y/N]"
-if [ "$HAS_TTY" = true ]; then
-  read -r PM2_ANSWER < /dev/tty || PM2_ANSWER="n"
-else
-  PM2_ANSWER="n"
-fi
 
-case "$PM2_ANSWER" in
-  [yY]|[yY][eE][sS])
-    info "📦 Installing pm2 globally..."
-    npm install -g pm2
-    ok "✅ pm2 installed"
-    ;;
-  *)
-    info "⏭️  Skipping pm2 installation"
-    ;;
-esac
+if [ "$PLATFORM" = "Linux" ]; then
+  # On Linux (Raspberry Pi): offer systemd service
+  warn "Install as systemd service? (recommended for Raspberry Pi) [y/N]"
+  if [ "$HAS_TTY" = true ]; then
+    read -r SYSTEMD_ANSWER < /dev/tty || SYSTEMD_ANSWER="n"
+  else
+    SYSTEMD_ANSWER="n"
+  fi
+
+  case "$SYSTEMD_ANSWER" in
+    [yY]|[yY][eE][sS])
+      SERVICE_SRC="${SCRIPT_DIR}/taina.service"
+      if [ ! -f "$SERVICE_SRC" ]; then
+        err "❌ taina.service not found in ${SCRIPT_DIR}"
+        err "   Cannot install systemd service."
+      else
+        CURRENT_USER="$(whoami)"
+        NODE_BIN="$(which node)"
+        NPX_BIN="$(which npx)"
+
+        info "📦 Installing systemd service..."
+
+        # Copy service file to a temp location and patch it
+        TMP_SERVICE="$(mktemp)"
+        cp "$SERVICE_SRC" "$TMP_SERVICE"
+
+        # Substitute placeholders with actual values
+        sed -i "s|^User=.*|User=${CURRENT_USER}|" "$TMP_SERVICE"
+        sed -i "s|^WorkingDirectory=.*|WorkingDirectory=${SCRIPT_DIR}|" "$TMP_SERVICE"
+        sed -i "s|^EnvironmentFile=.*|EnvironmentFile=${SCRIPT_DIR}/.env|" "$TMP_SERVICE"
+        sed -i "s|^ExecStart=.*|ExecStart=${NPX_BIN} tsx src/index.ts|" "$TMP_SERVICE"
+        sed -i "s|^ReadWritePaths=.*|ReadWritePaths=${SCRIPT_DIR}/data ${SCRIPT_DIR}/skills /tmp|" "$TMP_SERVICE"
+
+        sudo cp "$TMP_SERVICE" /etc/systemd/system/taina.service
+        rm -f "$TMP_SERVICE"
+
+        sudo systemctl daemon-reload
+        sudo systemctl enable taina
+
+        ok "✅ systemd service installed and enabled"
+        info "  Start with:  sudo systemctl start taina"
+        info "  View logs:   journalctl -u taina -f"
+      fi
+      ;;
+    *)
+      info "⏭️  Skipping systemd service installation"
+      ;;
+  esac
+
+elif [ "$PLATFORM" = "macOS" ]; then
+  # On macOS: offer pm2
+  warn "Install pm2 for always-on service mode? (recommended for Mac Mini) [y/N]"
+  if [ "$HAS_TTY" = true ]; then
+    read -r PM2_ANSWER < /dev/tty || PM2_ANSWER="n"
+  else
+    PM2_ANSWER="n"
+  fi
+
+  case "$PM2_ANSWER" in
+    [yY]|[yY][eE][sS])
+      info "📦 Installing pm2 globally..."
+      npm install -g pm2
+      ok "✅ pm2 installed"
+      ;;
+    *)
+      info "⏭️  Skipping pm2 installation"
+      ;;
+  esac
+fi
 
 # --------------- 7. Final instructions ---------------
 echo ""
@@ -298,7 +351,13 @@ info "  Start the bot:     npm start"
 info "  Development mode:  npm run dev"
 info "  Run smoke test:    npm run test:smoke"
 echo ""
-info "  For always-on service:"
-info "    pm2 start npm --name taina -- start"
-info "    pm2 startup && pm2 save"
+if [ "$PLATFORM" = "macOS" ]; then
+  info "  For always-on service (macOS):"
+  info "    pm2 start npm --name taina -- start"
+  info "    pm2 startup && pm2 save"
+elif [ "$PLATFORM" = "Linux" ]; then
+  info "  For always-on service (Linux):"
+  info "    sudo systemctl start taina"
+  info "    journalctl -u taina -f"
+fi
 echo ""

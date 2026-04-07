@@ -397,6 +397,76 @@ pi-taina/
 
 ---
 
+## Troubleshooting
+
+### npm install fails with 'Killed' or runs out of memory
+
+**Cause:** Not enough RAM — common on 1GB Raspberry Pi models.
+**Fix:** Add swap space before running `npm install`. See the [Swap Setup](#swap-setup-for-1gb-pis) section above.
+
+---
+
+### npm install fails with 'unsupported platform' or native module errors
+
+**Cause:** You're running 32-bit Raspberry Pi OS. Native dependencies (`koffi`, `esbuild`, `clipboard`) only ship prebuilt binaries for 64-bit ARM.
+**Fix:** Reflash with 64-bit Raspberry Pi OS. Check your architecture first:
+```bash
+uname -m   # must show: aarch64
+```
+If it shows `armv7l`, you need to re-flash. Download the 64-bit image at [raspberrypi.com/software](https://www.raspberrypi.com/software/).
+
+---
+
+### Bot starts but immediately crashes
+
+**Cause:** Missing required environment variables.
+**Fix:** Make sure `TELEGRAM_BOT_TOKEN`, `GEMINI_API_KEY`, and `ADMIN_USER_ID` are set in your `.env` file.
+To check:
+```bash
+cat .env | grep -v '^#' | grep -v '^$'
+```
+
+---
+
+### Bot can't connect to Telegram
+
+**Cause:** No internet, DNS issues, or firewall blocking outbound connections.
+**Fix:** Test connectivity:
+```bash
+ping api.telegram.org
+```
+If it fails, check your network connection or router/firewall settings.
+
+---
+
+### 'python3 not found' when generating AudioMoth chime
+
+**Cause:** Python 3 is not installed.
+**Fix:**
+```bash
+sudo apt-get install -y python3
+```
+
+---
+
+### Permission denied on setup.sh
+
+**Fix:**
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+---
+
+### How to view logs
+
+- **systemd:** `journalctl -u taina -f`
+- **pm2:** `pm2 logs taina`
+- **Running directly:** logs appear in the terminal
+
+---
+
 ## License
 
 MIT

@@ -1,0 +1,27 @@
+[Unit]
+Description=Pi-Tainá Biodiversity Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/pi-taina
+ExecStart=/usr/bin/npx tsx src/index.ts
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+EnvironmentFile=/home/pi/pi-taina/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=taina
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/pi/pi-taina/data /home/pi/pi-taina/skills /tmp
+
+[Install]
+WantedBy=multi-user.target
