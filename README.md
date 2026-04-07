@@ -81,6 +81,11 @@ This gives you 2GB of swap space, which is enough to install all dependencies wi
    The setup script installs Node.js, Python 3, and npm dependencies automatically.
    It also creates `.env` from the template if it doesn't exist.
 
+2. Verify the installation:
+   ```bash
+   npm run test:install
+   ```
+
 3. Copy the example environment file and fill in your values:
    ```bash
    cp .env.example .env
@@ -322,7 +327,28 @@ Community A (Amazon)          Community B (Nairobi)
 
 ---
 
-## Running as a Service (Mac Mini Deployment)
+## Running as a Service
+
+### Raspberry Pi (systemd)
+
+The setup script can install Tainá as a systemd service automatically. If you skipped that step:
+
+1. Copy the service file:
+   ```bash
+   sudo cp taina.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable taina
+   ```
+
+2. Start and manage:
+   ```bash
+   sudo systemctl start taina     # Start the bot
+   sudo systemctl status taina    # Check status
+   journalctl -u taina -f         # View logs
+   sudo systemctl restart taina   # Restart
+   ```
+
+### Mac Mini (pm2)
 
 For always-on deployment on a Mac Mini, use [pm2](https://pm2.keymetrics.io/):
 

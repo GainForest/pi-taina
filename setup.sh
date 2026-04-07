@@ -203,6 +203,16 @@ cd "$SCRIPT_DIR"
 npm install
 ok "✅ Dependencies installed"
 
+# --------------- 4b. Verify installation ---------------
+echo ""
+info "🔍 Verifying installation..."
+if npm run test:install; then
+  ok "✅ Installation verified"
+else
+  warn "⚠️  Some checks failed — see above. The bot may still work."
+  warn "   You can re-run verification later: npm run test:install"
+fi
+
 # --------------- 5. Setup .env file ---------------
 echo ""
 info "🔍 Checking .env configuration..."
