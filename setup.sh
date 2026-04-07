@@ -52,6 +52,61 @@ if (exec < /dev/tty) 2>/dev/null; then
   HAS_TTY=true
 fi
 
+# --------------- 1b. Architecture check (Linux only) ---------------
+if [ "$PLATFORM" = "Linux" ]; then
+  if [ "$ARCH" != "aarch64" ] && [ "$ARCH" != "x86_64" ]; then
+    err "❌ Unsupported architecture: $ARCH"
+    err "   Pi-Tainá requires 64-bit Raspberry Pi OS (aarch64)."
+    err "   32-bit (armv7l/armhf) is not supported."
+    err "   Download 64-bit OS: https://www.raspberrypi.com/software/"
+    exit 1
+  fi
+  if [ "$ARCH" = "aarch64" ]; then
+    ok "✅ 64-bit ARM detected"
+  fi
+fi
+
+# --------------- 1c. RAM/swap check (Linux only) ---------------
+if [ "$PLATFORM" = "Linux" ]; then
+  TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+  TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+  if [ "$TOTAL_MEM_MB" -lt 1500 ]; then
+    SWAP_KB=$(grep SwapTotal /proc/meminfo | awk '{print $2}')
+    SWAP_MB=$((SWAP_KB / 1024))
+    if [ "$SWAP_MB" -lt 1024 ]; then
+      warn "⚠️  Low RAM (${TOTAL_MEM_MB}MB) and swap (${SWAP_MB}MB) detected."
+      warn "   npm install may fail. Consider adding swap:"
+      info "     sudo dphys-swapfile swapoff"
+      info "     sudo sed -i 's/CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile"
+      info "     sudo dphys-swapfile setup && sudo dphys-swapfile swapon"
+      echo ""
+      warn "Continue anyway? [y/N]"
+      if [ "$HAS_TTY" = true ]; then
+        read -r SWAP_ANSWER < /dev/tty || SWAP_ANSWER="n"
+      else
+        SWAP_ANSWER="y"
+      fi
+      case "$SWAP_ANSWER" in
+        [yY]|[yY][eE][sS]) info "Continuing..." ;;
+        *) err "Setup aborted. Add swap and re-run."; exit 1 ;;
+      esac
+    else
+      ok "✅ Sufficient swap (${SWAP_MB}MB)"
+    fi
+  fi
+fi
+
+# --------------- 1d. Check git ---------------
+if ! command -v git &>/dev/null; then
+  if [ "$PLATFORM" = "Linux" ]; then
+    warn "⚠️  git not found — installing..."
+    sudo apt-get update && sudo apt-get install -y git
+  else
+    err "❌ git is required. Install it and re-run."
+    exit 1
+  fi
+fi
+
 # --------------- 2. Check/install Node.js 20+ ---------------
 info "🔍 Checking Node.js..."
 

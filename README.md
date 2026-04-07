@@ -22,6 +22,50 @@ Pi-Tainá is part of the [GainForest](https://gainforest.earth) network.
 
 ---
 
+## Raspberry Pi Deployment
+
+Pi-Tainá runs great on a Raspberry Pi as an always-on community server.
+
+### Hardware Requirements
+
+| Device | Status | Notes |
+|---|---|---|
+| Raspberry Pi 4 or 5 | ✅ Recommended | Best performance |
+| Raspberry Pi 3B+ or Zero 2 W | ⚠️ Works | Needs swap — see below |
+
+- **RAM:** 2GB recommended; 1GB works with swap enabled
+- **Storage:** 16GB microSD minimum; 32GB recommended
+- **Network:** Stable internet connection required
+
+### OS Requirement — Important
+
+You **must** use **64-bit Raspberry Pi OS** (arm64/aarch64).
+
+32-bit Raspberry Pi OS will **not** work — native dependencies (`koffi`, `esbuild`, `clipboard`) only ship prebuilt binaries for `linux_arm64`.
+
+Download the 64-bit image: [raspberrypi.com/software](https://www.raspberrypi.com/software/)
+
+To check your architecture:
+```bash
+uname -m   # should show: aarch64
+```
+
+If it shows `armv7l`, you're on 32-bit OS — you'll need to re-flash with the 64-bit image.
+
+### Swap Setup for 1GB Pis
+
+If your Pi has only 1GB RAM, increase swap to prevent out-of-memory errors during `npm install`:
+
+```bash
+sudo dphys-swapfile swapoff
+sudo nano /etc/dphys-swapfile   # set CONF_SWAPSIZE=2048
+sudo dphys-swapfile setup && sudo dphys-swapfile swapon
+```
+
+This gives you 2GB of swap space, which is enough to install all dependencies without crashing.
+
+---
+
 ## Quick Start
 
 **Prerequisites:** Node.js 20+, npm, Python 3 (for AudioMoth chime generation)

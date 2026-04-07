@@ -9,6 +9,7 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
+    "test:install": "tsx src/test-install.ts",
     "test:smoke": "tsx src/test-smoke.ts"
   },
   "dependencies": {
