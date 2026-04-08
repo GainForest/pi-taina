@@ -20,6 +20,7 @@ import { generateTreeCoverLossChart, buildGfwMapUrl } from "./tools/gfw-chart.js
 import { transcribeVoice } from "./tools/transcribe-voice.js";
 import { queryHyperindex } from "./tools/query-hyperindex.js";
 import { createHypercert } from "./tools/create-hypercert.js";
+import { createOrganization } from "./tools/create-organization.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
@@ -153,6 +154,29 @@ const createHypercertSchema = Type.Object({
   latitude: Type.Optional(Type.Number({ description: 'GPS latitude of the project location' })),
   longitude: Type.Optional(Type.Number({ description: 'GPS longitude of the project location' })),
   locationName: Type.Optional(Type.String({ description: 'Name of the project location' })),
+});
+
+const createOrganizationSchema = Type.Object({
+  handle: Type.String({ description: "Desired handle for the org (without .climateai.org). E.g. \"cabarete-sostenible\"" }),
+  displayName: Type.String({ description: "Organization display name" }),
+  description: Type.String({ description: "About the organization (a few sentences)" }),
+  organizationType: Type.Array(Type.String(), { description: "Organization types: nonprofit, business, government, academic, conservation, community, indigenous, other" }),
+  website: Type.Optional(Type.String({ description: "Organization website URL" })),
+  foundedDate: Type.Optional(Type.String({ description: "Year or date founded (ISO 8601)" })),
+  country: Type.Optional(Type.String({ description: "Country where the org is based" })),
+  urls: Type.Optional(Type.Array(Type.Object({
+    url: Type.String({ description: "URL" }),
+    label: Type.Optional(Type.String({ description: "Label for the URL" })),
+  }), { description: "Social media and other URLs" })),
+  objectives: Type.Optional(Type.Array(Type.String(), { description: "Main goals/objectives" })),
+  latitude: Type.Optional(Type.Number({ description: "GPS latitude of org location" })),
+  longitude: Type.Optional(Type.Number({ description: "GPS longitude of org location" })),
+  locationName: Type.Optional(Type.String({ description: "Name of the org location" })),
+  memberName: Type.Optional(Type.String({ description: "Name of the first member (person creating the org)" })),
+  memberRole: Type.Optional(Type.String({ description: "Role of the first member (e.g. Director, Coordinator)" })),
+  memberEmail: Type.Optional(Type.String({ description: "Email of the first member" })),
+  memberLanguages: Type.Optional(Type.Array(Type.String(), { description: "Languages the first member speaks" })),
+  memberExpertise: Type.Optional(Type.Array(Type.String(), { description: "Areas of expertise of the first member" })),
 });
 
 const attachObservationsSchema = Type.Object({
@@ -476,6 +500,42 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const createOrganizationTool: ToolDefinition<typeof createOrganizationSchema> = {
+    name: 'create_organization',
+    label: 'Create Organization',
+    description: 'Create a new organization on the climateai.org network. Creates an account and sets up the organization profile, metadata, and optionally the first member. Call this only after collecting all required info from the user and showing them a confirmation summary.',
+    parameters: createOrganizationSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const user = stateRef.state.currentUser;
+      if (!user) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'No user context' }) }], details: {} };
+      }
+      const photos = stateRef.state.photos;
+      const result = await createOrganization({
+        handle: params.handle,
+        displayName: params.displayName,
+        description: params.description,
+        organizationType: params.organizationType,
+        website: params.website,
+        foundedDate: params.foundedDate,
+        country: params.country,
+        urls: params.urls,
+        objectives: params.objectives,
+        decimalLatitude: params.latitude,
+        decimalLongitude: params.longitude,
+        locationName: params.locationName,
+        memberName: params.memberName,
+        memberRole: params.memberRole,
+        memberEmail: params.memberEmail,
+        memberLanguages: params.memberLanguages,
+        memberExpertise: params.memberExpertise,
+        avatar: photos.length > 0 ? photos[photos.length - 1] : undefined,
+        submittedBy: user,
+      });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: {} };
+    },
+  };
+
   const attachObservationsTool: ToolDefinition<typeof attachObservationsSchema> = {
     name: 'attach_observations',
     label: 'Attach Observations to Hypercert',
@@ -607,6 +667,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     forestReportTool as unknown as ToolDefinition,
     queryHyperindexTool as unknown as ToolDefinition,
     createHypercertTool as unknown as ToolDefinition,
+    createOrganizationTool as unknown as ToolDefinition,
     attachObservationsTool as unknown as ToolDefinition,
     generateChimeTool as unknown as ToolDefinition,
     weatherReportTool as unknown as ToolDefinition,
