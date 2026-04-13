@@ -3,7 +3,7 @@
 // extracting locations, and sending responses.
 // Uses grammY for the Telegram Bot API.
 
-import { Bot, InputFile, InlineKeyboard, Keyboard } from "grammy";
+import { Bot, InputFile, InlineKeyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
 import { formatTelegramHtml } from "./telegram-format.js";
 import { 
@@ -57,6 +57,47 @@ export type MessageHandler = (msg: IncomingMessage) => Promise<void>;
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+
+type TelegramCommand = {
+  command: string;
+  description: string;
+};
+
+const MEMBER_COMMANDS: TelegramCommand[] = [
+  { command: "start", description: "Open the welcome screen" },
+  { command: "help", description: "Show the welcome screen" },
+  { command: "join", description: "Request access to the community" },
+  { command: "identify", description: "Identify a species from a photo" },
+  { command: "forest", description: "Get a forest health report" },
+  { command: "weather", description: "Check the weather forecast" },
+  { command: "audiomoth", description: "Set up an AudioMoth recorder" },
+  { command: "restart", description: "Reset this chat" },
+];
+
+const ADMIN_COMMANDS: TelegramCommand[] = [
+  { command: "pending", description: "List pending join requests" },
+  { command: "approve", description: "Approve a join request" },
+  { command: "remove", description: "Remove a member" },
+  { command: "members", description: "List community members" },
+];
+
+function parseTelegramCommand(text: string): string | undefined {
+  const match = text.trim().match(/^\/([a-z0-9_]+)(?:@[\w_]+)?(?:\s|$)/i);
+  return match?.[1].toLowerCase();
+}
+
+async function registerTelegramCommands(bot: Bot): Promise<void> {
+  try {
+    await Promise.all([
+      bot.api.setMyCommands(MEMBER_COMMANDS, { scope: { type: "all_private_chats" } }),
+      bot.api.setMyCommands(MEMBER_COMMANDS, { scope: { type: "all_group_chats" } }),
+      bot.api.setMyCommands(ADMIN_COMMANDS, { scope: { type: "all_chat_administrators" } }),
+    ]);
+  } catch (err) {
+    console.warn("[telegram] Scoped commands unavailable, falling back to a shared menu:", err);
+    await bot.api.setMyCommands(MEMBER_COMMANDS);
+  }
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -180,17 +221,6 @@ function buildStartKeyboard(): InlineKeyboard {
     .text('🔄 Restart Chat', 'action:restart');
 }
 
-function buildPersistentKeyboard(): Keyboard {
-  return new Keyboard()
-    .text('🌿 Identify').text('🌳 Forest')
-    .row()
-    .text('🎙️ AudioMoth').text('🌤️ Weather')
-    .row()
-    .text('📋 Menu').text('🔄 Restart')
-    .resized()
-    .persistent();
-}
-
 // ─── Main Export ─────────────────────────────────────────────────────────────
 
 /**
@@ -228,6 +258,9 @@ export async function createTelegramBot(
   const botInfo = await bot.api.getMe();
   const botUsername = botInfo.username?.toLowerCase() ?? "";
 
+  // Register Telegram menu commands for the bot menu.
+  await registerTelegramCommands(bot);
+
   // ─── Message handler ───────────────────────────────────────────────────────
 
   bot.on("message", async (ctx) => {
@@ -246,23 +279,31 @@ export async function createTelegramBot(
 
       const chatType = msg.chat.type; // "private" | "group" | "supergroup" | "channel"
       const isGroup = chatType === "group" || chatType === "supergroup";
+      const rawTextForCommand = msg.text ?? msg.caption ?? '';
+      const commandName = rawTextForCommand.trim().startsWith("/")
+        ? parseTelegramCommand(rawTextForCommand)
+        : undefined;
 
       // ── Check for /start BEFORE the access gate (works for all users) ──
-      const rawTextForCommand = msg.text ?? msg.caption ?? '';
-      if (rawTextForCommand.trim().startsWith("/start")) {
+      if (commandName === "start" || commandName === "help" || commandName === "menu") {
         // Send welcome with inline buttons
         await ctx.reply(START_WELCOME_TEXT, {
           parse_mode: "HTML",
           reply_markup: buildStartKeyboard(),
         });
-        // Set persistent bottom keyboard
-        await ctx.reply("⌨️ Quick actions are always available below 👇", {
-          reply_markup: buildPersistentKeyboard(),
+        return;
+      }
+
+      if (commandName === "restart") {
+        resetSession(user.id);
+        await ctx.reply(START_WELCOME_TEXT, {
+          parse_mode: "HTML",
+          reply_markup: buildStartKeyboard(),
         });
         return;
       }
 
-      // ── Persistent keyboard shortcuts ──
+      // ── Persistent keyboard shortcuts and command aliases ──
       const persistentAction = rawTextForCommand.trim();
       if (persistentAction === "📋 Menu") {
         await ctx.reply(START_WELCOME_TEXT, {
@@ -279,7 +320,7 @@ export async function createTelegramBot(
         });
         return;
       }
-      if (persistentAction === "🌿 Identify") {
+      if (persistentAction === "🌿 Identify" || commandName === "identify") {
         if (!isAuthorized(user.id)) {
           await ctx.reply("You need to join the community first! Send /join to request access 🌱");
           return;
@@ -296,7 +337,7 @@ export async function createTelegramBot(
         await onMessage(incoming);
         return;
       }
-      if (persistentAction === "🌳 Forest") {
+      if (persistentAction === "🌳 Forest" || commandName === "forest") {
         if (!isAuthorized(user.id)) {
           await ctx.reply("You need to join the community first! Send /join to request access 🌱");
           return;
@@ -313,7 +354,7 @@ export async function createTelegramBot(
         await onMessage(incoming);
         return;
       }
-      if (persistentAction === '🎙️ AudioMoth') {
+      if (persistentAction === '🎙️ AudioMoth' || commandName === "audiomoth") {
         if (!isAuthorized(user.id)) {
           await ctx.reply('You need to join the community first! Send /join to request access 🌱');
           return;
@@ -330,7 +371,7 @@ export async function createTelegramBot(
         await onMessage(incoming);
         return;
       }
-      if (persistentAction === '🌤️ Weather') {
+      if (persistentAction === '🌤️ Weather' || commandName === "weather") {
         if (!isAuthorized(user.id)) {
           await ctx.reply('You need to join the community first! Send /join to request access 🌱');
           return;
@@ -349,7 +390,7 @@ export async function createTelegramBot(
       }
 
       // ── Check for /join BEFORE the access gate (unauthorized users can use this) ──
-      if (rawTextForCommand.trim().startsWith('/join')) {
+      if (commandName === "join") {
         if (isAuthorized(user.id)) {
           await ctx.reply('You\'re already part of the community! 🌿');
         } else {
@@ -376,7 +417,7 @@ export async function createTelegramBot(
       }
 
       // ── Admin commands ─────────────────────────────────────────────────────
-      if (rawTextForCommand.trim().startsWith('/approve')) {
+      if (commandName === "approve") {
         if (!isAdmin(user.id)) {
           await ctx.reply('Only admins can approve members.');
           return;
@@ -421,7 +462,7 @@ export async function createTelegramBot(
         return;
       }
 
-      if (rawTextForCommand.trim().startsWith('/remove')) {
+      if (commandName === "remove") {
         if (!isAdmin(user.id)) {
           await ctx.reply('Only admins can remove members.');
           return;
@@ -440,7 +481,7 @@ export async function createTelegramBot(
         return;
       }
 
-      if (rawTextForCommand.trim().startsWith('/pending')) {
+      if (commandName === "pending") {
         if (!isAdmin(user.id)) {
           await ctx.reply("Only admins can view pending requests.");
           return;
@@ -459,7 +500,7 @@ export async function createTelegramBot(
         return;
       }
 
-      if (rawTextForCommand.trim().startsWith('/members')) {
+      if (commandName === "members") {
         if (!isAdmin(user.id)) {
           await ctx.reply('Only admins can view the member list.');
           return;
@@ -594,7 +635,7 @@ export async function createTelegramBot(
       // Always acknowledge the callback to remove the loading spinner
       await ctx.answerCallbackQuery();
 
-      switch (data) {
+        switch (data) {
         case "action:identify": {
           if (!authorized) {
             await bot.api.sendMessage(chatId, "You need to join the community first! Send /join to request access 🌱");
@@ -691,9 +732,6 @@ export async function createTelegramBot(
           await ctx.reply(START_WELCOME_TEXT, {
             parse_mode: "HTML",
             reply_markup: buildStartKeyboard(),
-          });
-          await bot.api.sendMessage(chatId, "⌨️ Quick actions are always available below 👇", {
-            reply_markup: buildPersistentKeyboard(),
           });
           break;
 
