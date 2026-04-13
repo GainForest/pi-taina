@@ -71,6 +71,13 @@ type LocaleBundle = {
     onlyAdminsViewMembers: string;
     communityMembersHeader: string;
     menuGuidance: string;
+    languageCommandTitle: string;
+    languageCommandHint: string;
+    languageOptionEnglish: string;
+    languageOptionSpanish: string;
+    languageOptionPortuguese: string;
+    languageSaved: string;
+    languageSavedFollowUp: string;
     callbackOnlyAdmins: string;
     callbackApproved: string;
     callbackAdded: string;
@@ -89,6 +96,7 @@ const LOCALES: Record<SupportedLocale, LocaleBundle> = {
         { command: "help", description: "Show the welcome screen" },
         { command: "join", description: "Request access to the community" },
         { command: "identify", description: "Identify a species from a photo" },
+        { command: "language", description: "Change your language" },
         { command: "forest", description: "Get a forest health report" },
         { command: "weather", description: "Check the weather forecast" },
         { command: "audiomoth", description: "Set up an AudioMoth recorder" },
@@ -136,6 +144,13 @@ const LOCALES: Record<SupportedLocale, LocaleBundle> = {
       onlyAdminsViewMembers: "Only admins can view the member list.",
       communityMembersHeader: "Community members:",
       menuGuidance: "Use the command menu below for /identify, /forest, /weather, and /audiomoth 🌿",
+      languageCommandTitle: "🌐 <b>Choose your language</b>",
+      languageCommandHint: "Tap one of the options below. I'll switch right away.",
+      languageOptionEnglish: "English",
+      languageOptionSpanish: "Spanish",
+      languageOptionPortuguese: "Portuguese",
+      languageSaved: "✅ Language updated to <b>{language}</b>.",
+      languageSavedFollowUp: "Use the command menu below to keep going 🌿",
       callbackOnlyAdmins: "Only admins can do this",
       callbackApproved: "✅ Approved!",
       callbackAdded: "✅ Added as member",
@@ -152,6 +167,7 @@ const LOCALES: Record<SupportedLocale, LocaleBundle> = {
         { command: "help", description: "Mostrar la pantalla de bienvenida" },
         { command: "join", description: "Pedir acceso a la comunidad" },
         { command: "identify", description: "Identificar una especie en una foto" },
+        { command: "language", description: "Cambiar tu idioma" },
         { command: "forest", description: "Obtener un informe de salud del bosque" },
         { command: "weather", description: "Consultar el pronóstico del tiempo" },
         { command: "audiomoth", description: "Configurar un registrador AudioMoth" },
@@ -199,6 +215,13 @@ const LOCALES: Record<SupportedLocale, LocaleBundle> = {
       onlyAdminsViewMembers: "Solo los administradores pueden ver la lista de miembros.",
       communityMembersHeader: "Miembros de la comunidad:",
       menuGuidance: "Usa el menú de comandos abajo para /identify, /forest, /weather y /audiomoth 🌿",
+      languageCommandTitle: "🌐 <b>Elige tu idioma</b>",
+      languageCommandHint: "Toca una opción abajo. Cambiaré enseguida.",
+      languageOptionEnglish: "Inglés",
+      languageOptionSpanish: "Español",
+      languageOptionPortuguese: "Portugués",
+      languageSaved: "✅ Idioma actualizado a <b>{language}</b>.",
+      languageSavedFollowUp: "Usa el menú de comandos abajo para seguir 🌿",
       callbackOnlyAdmins: "Solo los administradores pueden hacer esto",
       callbackApproved: "✅ ¡Aprobado!",
       callbackAdded: "✅ Agregado como miembro",
@@ -215,6 +238,7 @@ const LOCALES: Record<SupportedLocale, LocaleBundle> = {
         { command: "help", description: "Mostrar a tela de boas-vindas" },
         { command: "join", description: "Pedir acesso à comunidade" },
         { command: "identify", description: "Identificar uma espécie em uma foto" },
+        { command: "language", description: "Mudar seu idioma" },
         { command: "forest", description: "Obter um relatório de saúde da floresta" },
         { command: "weather", description: "Ver a previsão do tempo" },
         { command: "audiomoth", description: "Configurar um gravador AudioMoth" },
@@ -262,6 +286,13 @@ const LOCALES: Record<SupportedLocale, LocaleBundle> = {
       onlyAdminsViewMembers: "Só admins podem ver a lista de membros.",
       communityMembersHeader: "Membros da comunidade:",
       menuGuidance: "Use o menu de comandos abaixo para /identify, /forest, /weather e /audiomoth 🌿",
+      languageCommandTitle: "🌐 <b>Escolha seu idioma</b>",
+      languageCommandHint: "Toque em uma opção abaixo. Vou mudar na hora.",
+      languageOptionEnglish: "Inglês",
+      languageOptionSpanish: "Espanhol",
+      languageOptionPortuguese: "Português",
+      languageSaved: "✅ Idioma atualizado para <b>{language}</b>.",
+      languageSavedFollowUp: "Use o menu de comandos abaixo para continuar 🌿",
       callbackOnlyAdmins: "Só admins podem fazer isso",
       callbackApproved: "✅ Aprovado!",
       callbackAdded: "✅ Adicionado como membro",

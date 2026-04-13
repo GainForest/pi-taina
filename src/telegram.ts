@@ -6,7 +6,7 @@
 import { Bot, InputFile, InlineKeyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
 import { formatTelegramHtml } from "./telegram-format.js";
-import { ensurePreferredLanguage, getPreferredLanguage } from "./user-language.js";
+import { ensurePreferredLanguage, getPreferredLanguage, setPreferredLanguage } from "./user-language.js";
 import {
   getTelegramLocaleBundle,
   resolveSupportedLocale,
@@ -218,6 +218,34 @@ function buildStartMessage(locale: SupportedLocale, isAuthorizedUser: boolean): 
   return `${texts.startWelcome}\n\n${texts.startUnauthorizedHint}`;
 }
 
+function buildLanguageKeyboard(locale: SupportedLocale): InlineKeyboard {
+  const texts = getTelegramLocaleBundle(locale).texts;
+  return new InlineKeyboard()
+    .text(texts.languageOptionEnglish, "action:language:set:en")
+    .text(texts.languageOptionSpanish, "action:language:set:es")
+    .text(texts.languageOptionPortuguese, "action:language:set:pt");
+}
+
+function buildLanguageMessage(locale: SupportedLocale): string {
+  const texts = getTelegramLocaleBundle(locale).texts;
+  return `${texts.languageCommandTitle}\n\n${texts.languageCommandHint}`;
+}
+
+function languageLabel(locale: SupportedLocale): string {
+  const texts = getTelegramLocaleBundle(locale).texts;
+  switch (locale) {
+    case "en": return texts.languageOptionEnglish;
+    case "es": return texts.languageOptionSpanish;
+    case "pt": return texts.languageOptionPortuguese;
+  }
+}
+
+function buildLanguageSavedMessage(locale: SupportedLocale): string {
+  const texts = getTelegramLocaleBundle(locale).texts;
+  const label = escapeHtml(languageLabel(locale));
+  return `${texts.languageSaved.replace("{language}", label)}\n\n${texts.languageSavedFollowUp}`;
+}
+
 type StartReply = (
   text: string,
   options?: { parse_mode?: "HTML"; reply_markup?: InlineKeyboard }
@@ -307,6 +335,14 @@ export async function createTelegramBot(
       if (commandName === "restart") {
         resetSession(user.id);
         await sendStartScreen((text, options) => ctx.reply(text, options), locale, isAuthorized(user.id));
+        return;
+      }
+
+      if (commandName === "language") {
+        await ctx.reply(buildLanguageMessage(locale), {
+          parse_mode: "HTML",
+          reply_markup: buildLanguageKeyboard(locale),
+        });
         return;
       }
 
@@ -635,6 +671,16 @@ export async function createTelegramBot(
       await ctx.answerCallbackQuery();
 
         switch (data) {
+          case "action:language:set:en":
+          case "action:language:set:es":
+          case "action:language:set:pt": {
+            const selectedLocale = data.split(":").pop() as SupportedLocale;
+            const persisted = setPreferredLanguage(userId, selectedLocale);
+            const updatedLocale = resolveSupportedLocale(persisted, languageCode);
+            await bot.api.sendMessage(chatId, buildLanguageSavedMessage(updatedLocale), { parse_mode: "HTML" });
+            break;
+          }
+
         case "action:identify": {
           if (!authorized) {
             await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.needJoin);
