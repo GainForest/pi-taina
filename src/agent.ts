@@ -24,7 +24,7 @@ import { createOrganization } from "./tools/create-organization.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
-import { ensurePreferredLanguage, getPreferredLanguage } from "./user-language.js";
+import { ensurePreferredLanguage, getPreferredLanguage, setPreferredLanguage } from "./user-language.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -92,6 +92,27 @@ function isExplicitPublishConfirmation(text: string): boolean {
 
   return /\b(publish|record|save)( this| it| the observation| the record)?\b/i.test(normalized) ||
     /\bgo ahead\b/i.test(normalized);
+}
+
+function detectExplicitLanguagePreference(text: string): string | undefined {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) {
+    return undefined;
+  }
+
+  const switchers = [
+    { language: "en", patterns: [/\b(speak|reply|respond|talk|write) in english\b/, /\bswitch to english\b/, /\benglish please\b/] },
+    { language: "es", patterns: [/\b(speak|reply|respond|talk|write) in spanish\b/, /\bhabla en espa(?:ñ|n)ol\b/, /\bresponde en espa(?:ñ|n)ol\b/, /\bcambia a espa(?:ñ|n)ol\b/, /\bespanol por favor\b/] },
+    { language: "pt", patterns: [/\b(speak|reply|respond|talk|write) in portuguese\b/, /\bfale em portugu(?:ê|e)s\b/, /\bresponda em portugu(?:ê|e)s\b/, /\bmude para portugu(?:ê|e)s\b/] },
+  ] as const;
+
+  for (const candidate of switchers) {
+    if (candidate.patterns.some((pattern) => pattern.test(normalized))) {
+      return candidate.language;
+    }
+  }
+
+  return undefined;
 }
 
 // ─── Custom tool definitions ──────────────────────────────────────────────────
@@ -802,8 +823,6 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     displayName: msg.user.displayName,
   };
 
-  const preferredLanguage = ensurePreferredLanguage(msg.user.id, msg.languageCode) ?? getPreferredLanguage(msg.user.id);
-
   const currentTurnId = sessionState.currentTurnId;
 
   if (msg.photo) {
@@ -814,18 +833,12 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   }
 
   let latestUserText: string | undefined;
-
-  // Build the prompt text
-  const userContext = `Message from ${msg.user.displayName} (Telegram user ID: ${msg.user.id})`;
-  let promptText: string;
-  const languageGuidance = preferredLanguage
-    ? `\nThe user's preferred language is ${preferredLanguage}. Reply in that language unless the user clearly switches to another one.`
-    : "";
+  let promptBody: string;
 
   if (msg.photo) {
     const userText = msg.text ? ` ${msg.text}` : "";
     latestUserText = msg.text ?? undefined;
-    promptText = `${userContext}${languageGuidance}\nThe user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}`;
+    promptBody = `The user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}`;
   } else if (msg.voice) {
     const transcription = await transcribeVoice(
       msg.voice.data,
@@ -834,21 +847,34 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     );
     if ("text" in transcription) {
       latestUserText = transcription.text;
-      promptText = `${userContext}${languageGuidance}\n[Voice note transcription]: ${transcription.text}`;
+      promptBody = `[Voice note transcription]: ${transcription.text}`;
     } else {
       console.error("Voice transcription failed:", transcription.error);
-      promptText = `${userContext}${languageGuidance}\n[The user sent a voice note but transcription failed. Let them know you couldn't process it and ask them to type their message instead.]`;
+      promptBody = `[The user sent a voice note but transcription failed. Let them know you couldn't process it and ask them to type their message instead.]`;
     }
   } else if (msg.location) {
     const { latitude, longitude } = msg.location;
     const userText = msg.text ? ` ${msg.text}` : "";
     latestUserText = msg.text ?? undefined;
-    promptText = `${userContext}${languageGuidance}\nThe user shared their GPS location: latitude ${latitude}, longitude ${longitude}.${userText}`;
+    promptBody = `The user shared their GPS location: latitude ${latitude}, longitude ${longitude}.${userText}`;
   } else {
     const text = msg.text ?? "";
     latestUserText = text;
-    promptText = `${userContext}${languageGuidance}\n${text}`;
+    promptBody = text;
   }
+
+  const explicitLanguagePreference = latestUserText ? detectExplicitLanguagePreference(latestUserText) : undefined;
+  const preferredLanguage = explicitLanguagePreference
+    ? setPreferredLanguage(msg.user.id, explicitLanguagePreference) ?? explicitLanguagePreference
+    : ensurePreferredLanguage(msg.user.id, msg.languageCode) ?? getPreferredLanguage(msg.user.id);
+
+  const languageGuidance = preferredLanguage
+    ? `\nThe user's preferred language is ${preferredLanguage}. Keep replies in that language, preserve Tainá's warm persona, and use the same language for chart titles, axis labels, and other generated labels. If the user clearly asks to switch languages, follow the new language.`
+    : "";
+
+  // Build the prompt text
+  const userContext = `Message from ${msg.user.displayName} (Telegram user ID: ${msg.user.id})`;
+  const promptText = `${userContext}${languageGuidance}\n${promptBody}`;
 
   if (latestUserText && isExplicitPublishConfirmation(latestUserText)) {
     sessionState.latestPublishConfirmationTurnId = currentTurnId;
