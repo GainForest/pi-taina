@@ -66,11 +66,4 @@ Smoke test:
 
 ```bash
 npm run test:smoke
-```
-
-## Need the deeper guide?
-
-- ATProto publishing: [README.md#setting-up-an-atproto-account](README.md#setting-up-an-atproto-account)
-- Global Forest Watch: [README.md#setting-up-global-forest-watch](README.md#setting-up-global-forest-watch)
-- Raspberry Pi swap and service setup: [README.md#raspberry-pi-deployment](README.md#raspberry-pi-deployment)
-- Running as a service: [README.md#running-as-a-service](README.md#running-as-a-service)
+``
