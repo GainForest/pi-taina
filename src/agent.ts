@@ -24,6 +24,7 @@ import { createOrganization } from "./tools/create-organization.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
+import { ensurePreferredLanguage, getPreferredLanguage } from "./user-language.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -801,6 +802,8 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     displayName: msg.user.displayName,
   };
 
+  const preferredLanguage = ensurePreferredLanguage(msg.user.id, msg.languageCode) ?? getPreferredLanguage(msg.user.id);
+
   const currentTurnId = sessionState.currentTurnId;
 
   if (msg.photo) {
@@ -815,11 +818,14 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   // Build the prompt text
   const userContext = `Message from ${msg.user.displayName} (Telegram user ID: ${msg.user.id})`;
   let promptText: string;
+  const languageGuidance = preferredLanguage
+    ? `\nThe user's preferred language is ${preferredLanguage}. Reply in that language unless the user clearly switches to another one.`
+    : "";
 
   if (msg.photo) {
     const userText = msg.text ? ` ${msg.text}` : "";
     latestUserText = msg.text ?? undefined;
-    promptText = `${userContext}\nThe user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}`;
+    promptText = `${userContext}${languageGuidance}\nThe user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}`;
   } else if (msg.voice) {
     const transcription = await transcribeVoice(
       msg.voice.data,
@@ -828,20 +834,20 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     );
     if ("text" in transcription) {
       latestUserText = transcription.text;
-      promptText = `${userContext}\n[Voice note transcription]: ${transcription.text}`;
+      promptText = `${userContext}${languageGuidance}\n[Voice note transcription]: ${transcription.text}`;
     } else {
       console.error("Voice transcription failed:", transcription.error);
-      promptText = `${userContext}\n[The user sent a voice note but transcription failed. Let them know you couldn't process it and ask them to type their message instead.]`;
+      promptText = `${userContext}${languageGuidance}\n[The user sent a voice note but transcription failed. Let them know you couldn't process it and ask them to type their message instead.]`;
     }
   } else if (msg.location) {
     const { latitude, longitude } = msg.location;
     const userText = msg.text ? ` ${msg.text}` : "";
     latestUserText = msg.text ?? undefined;
-    promptText = `${userContext}\nThe user shared their GPS location: latitude ${latitude}, longitude ${longitude}.${userText}`;
+    promptText = `${userContext}${languageGuidance}\nThe user shared their GPS location: latitude ${latitude}, longitude ${longitude}.${userText}`;
   } else {
     const text = msg.text ?? "";
     latestUserText = text;
-    promptText = `${userContext}\n${text}`;
+    promptText = `${userContext}${languageGuidance}\n${text}`;
   }
 
   if (latestUserText && isExplicitPublishConfirmation(latestUserText)) {

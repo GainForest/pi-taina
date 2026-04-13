@@ -6,6 +6,7 @@
 import { Bot, InputFile, InlineKeyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
 import { formatTelegramHtml } from "./telegram-format.js";
+import { ensurePreferredLanguage } from "./user-language.js";
 import { 
   isAuthorized, isAdmin, 
   addJoinRequest, approveRequest, denyRequest,
@@ -43,6 +44,8 @@ export interface IncomingMessage {
     username?: string;
     displayName: string; // first_name + (last_name || "") trimmed
   };
+  // Telegram language metadata for seeding preferences
+  languageCode?: string;
   // Whether this is a group chat
   isGroup: boolean;
   // Whether the bot was mentioned (in groups)
@@ -284,11 +287,14 @@ export async function createTelegramBot(
       // ── Extract user info ──────────────────────────────────────────────────
       const from = msg.from;
       const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
+      const languageCode = from.language_code;
       const user = {
         id: from.id,
         username: from.username,
         displayName,
       };
+
+      ensurePreferredLanguage(user.id, languageCode);
 
       const chatType = msg.chat.type; // "private" | "group" | "supergroup" | "channel"
       const isGroup = chatType === "group" || chatType === "supergroup";
@@ -319,6 +325,7 @@ export async function createTelegramBot(
           messageId: msg.message_id,
           text: `The user tapped the "🌿 Identify" quick-action button. They want to identify a species from a photo. Guide them on what to provide next (photo, location, etc).`,
           user,
+          languageCode,
           isGroup,
           isMentioned: false,
           isAdmin: isAdmin(user.id),
@@ -336,6 +343,7 @@ export async function createTelegramBot(
           messageId: msg.message_id,
           text: `The user tapped the "🌳 Forest" quick-action button. They want to get a forest health report for a location. Guide them on what to provide next (photo, location, etc).`,
           user,
+          languageCode,
           isGroup,
           isMentioned: false,
           isAdmin: isAdmin(user.id),
@@ -353,6 +361,7 @@ export async function createTelegramBot(
           messageId: msg.message_id,
           text: `The user tapped the "🎙️ AudioMoth" quick-action button. They want to set up an AudioMoth bioacoustic recorder. Guide them on what to provide next (photo, location, etc).`,
           user,
+          languageCode,
           isGroup,
           isMentioned: false,
           isAdmin: isAdmin(user.id),
@@ -370,6 +379,7 @@ export async function createTelegramBot(
           messageId: msg.message_id,
           text: `The user tapped the "🌤️ Weather" quick-action button. They want to check the weather forecast for a location. Guide them on what to provide next (photo, location, etc).`,
           user,
+          languageCode,
           isGroup,
           isMentioned: false,
           isAdmin: isAdmin(user.id),
@@ -535,6 +545,7 @@ export async function createTelegramBot(
         messageId: msg.message_id,
         text: rawText || undefined,
         user,
+        languageCode,
         isGroup,
         isMentioned,
         isAdmin: isAdmin(user.id),
@@ -619,7 +630,10 @@ export async function createTelegramBot(
       }
 
       const userId = from.id;
+      const languageCode = from.language_code;
       const authorized = isAuthorized(userId);
+
+      ensurePreferredLanguage(userId, languageCode);
 
       // Always acknowledge the callback to remove the loading spinner
       await ctx.answerCallbackQuery();
@@ -636,6 +650,7 @@ export async function createTelegramBot(
             messageId: ctx.callbackQuery.message?.message_id ?? 0,
             text: `The user tapped the "🌿 Identify Species" quick-action button. They want to identify a species from a photo. Guide them on what to provide next.`,
             user: { id: userId, username: from.username, displayName },
+            languageCode,
             isGroup: false,
             isMentioned: false,
             isAdmin: isAdmin(userId),
@@ -655,6 +670,7 @@ export async function createTelegramBot(
             messageId: ctx.callbackQuery.message?.message_id ?? 0,
             text: `The user tapped the "🌳 Forest Report" quick-action button. They want to get a forest health report for a location. Guide them on what to provide next.`,
             user: { id: userId, username: from.username, displayName },
+            languageCode,
             isGroup: false,
             isMentioned: false,
             isAdmin: isAdmin(userId),
@@ -674,6 +690,7 @@ export async function createTelegramBot(
             messageId: ctx.callbackQuery.message?.message_id ?? 0,
             text: `The user tapped the "🎙️ AudioMoth Setup" quick-action button. They want to set up an AudioMoth bioacoustic recorder. Guide them on what to provide next.`,
             user: { id: userId, username: from.username, displayName },
+            languageCode,
             isGroup: false,
             isMentioned: false,
             isAdmin: isAdmin(userId),
@@ -693,6 +710,7 @@ export async function createTelegramBot(
             messageId: ctx.callbackQuery.message?.message_id ?? 0,
             text: `The user tapped the "🌤️ Weather" quick-action button. They want to check the weather forecast for a location. Guide them on what to provide next.`,
             user: { id: userId, username: from.username, displayName },
+            languageCode,
             isGroup: false,
             isMentioned: false,
             isAdmin: isAdmin(userId),
