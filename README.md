@@ -70,6 +70,8 @@ This gives you 2GB of swap space, which is enough to install all dependencies wi
 
 **Prerequisites:** Node.js 20+, npm, Python 3 (for AudioMoth chime generation)
 
+> New here? Start with the short install guide: [INSTALL.md](INSTALL.md)
+
 > **Fastest way:** Run `./setup.sh` — it installs everything automatically on macOS and Raspberry Pi.
 
 1. Clone and setup:
