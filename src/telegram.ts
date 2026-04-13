@@ -5,10 +5,11 @@
 
 import { Bot, InputFile, InlineKeyboard, Keyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
+import { formatTelegramHtml } from "./telegram-format.js";
 import { 
   isAuthorized, isAdmin, 
   addJoinRequest, approveRequest, denyRequest,
-  getPendingRequests, addMember, removeMember, getMembers 
+  getPendingRequests, addMember, removeMember, getMembers, getAdmins 
 } from './whitelist.js';
 import { resetSession } from "./agent.js";
 
@@ -56,6 +57,58 @@ export type MessageHandler = (msg: IncomingMessage) => Promise<void>;
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildJoinRequestKeyboard(userId: number): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("✅ Approve", `admin:approve:${userId}`)
+    .text("❌ Deny", `admin:deny:${userId}`);
+}
+
+function buildJoinRequestMessage(displayName: string, username?: string, userId?: number): string {
+  const lines = [
+    "🆕 <b>New join request</b>",
+    "",
+    `<b>Name:</b> ${escapeHtml(displayName)}`,
+    `<b>Username:</b> ${username ? `@${escapeHtml(username)}` : "—"}`,
+  ];
+
+  if (userId !== undefined) {
+    lines.push(`<b>User ID:</b> <code>${userId}</code>`);
+  }
+
+  return lines.join("\n");
+}
+
+async function notifyAdminsOfJoinRequest(
+  bot: Bot,
+  request: { userId: number; displayName: string; username?: string }
+): Promise<void> {
+  const admins = getAdmins();
+  if (admins.length === 0) return;
+
+  const message = buildJoinRequestMessage(request.displayName, request.username, request.userId);
+  const keyboard = buildJoinRequestKeyboard(request.userId);
+
+  for (const admin of admins) {
+    try {
+      await bot.api.sendMessage(admin.userId, message, {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      });
+    } catch (err) {
+      console.warn(`[telegram] Failed to notify admin ${admin.userId} about join request from ${request.userId}:`, err);
+    }
+  }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -303,6 +356,7 @@ export async function createTelegramBot(
           const added = addJoinRequest(user.id, user.displayName, user.username);
           if (added) {
             await ctx.reply('Got it! I\'ll let the admins know you want to join 🙌');
+            await notifyAdminsOfJoinRequest(bot, { userId: user.id, displayName: user.displayName, username: user.username });
           } else {
             await ctx.reply('You already have a pending request. Hang tight! ⏳');
           }
@@ -398,9 +452,7 @@ export async function createTelegramBot(
           await ctx.reply(`📋 <b>${requests.length} pending request${requests.length > 1 ? "s" : ""}:</b>`, { parse_mode: "HTML" });
           for (const r of requests) {
             const name = r.displayName + (r.username ? ` (@${r.username})` : "");
-            const keyboard = new InlineKeyboard()
-              .text("✅ Approve", `admin:approve:${r.userId}`)
-              .text("❌ Deny", `admin:deny:${r.userId}`);
+            const keyboard = buildJoinRequestKeyboard(r.userId);
             await ctx.reply(name, { reply_markup: keyboard });
           }
         }
@@ -627,6 +679,7 @@ export async function createTelegramBot(
             const added = addJoinRequest(userId, displayName, from.username);
             if (added) {
               await bot.api.sendMessage(chatId, "Got it! I'll let the admins know you want to join 🙌");
+              await notifyAdminsOfJoinRequest(bot, { userId, displayName, username: from.username });
             } else {
               await bot.api.sendMessage(chatId, "You already have a pending request. Hang tight! ⏳");
             }
@@ -725,8 +778,9 @@ export async function createTelegramBot(
     const chunks = splitMessage(text);
     for (let i = 0; i < chunks.length; i++) {
       const isFirst = i === 0;
+      const chunk = chunks[i];
       try {
-        await bot.api.sendMessage(chatId, chunks[i], {
+        await bot.api.sendMessage(chatId, parseMode === "HTML" ? formatTelegramHtml(chunk) : chunk, {
           parse_mode: parseMode,
           reply_parameters:
             isFirst && options?.replyToMessageId !== undefined
@@ -739,7 +793,7 @@ export async function createTelegramBot(
           "Failed to send with parse_mode, retrying as plain text:",
           err instanceof Error ? err.message : err
         );
-        await bot.api.sendMessage(chatId, chunks[i], {
+        await bot.api.sendMessage(chatId, chunk, {
           reply_parameters:
             isFirst && options?.replyToMessageId !== undefined
               ? { message_id: options.replyToMessageId }

@@ -33,6 +33,9 @@ interface SessionState {
   currentUser?: TelegramUser;
   pendingChart?: Buffer;
   pendingAudio?: { data: Buffer; filename: string; caption: string };
+  currentTurnId?: number;
+  latestIdentificationTurnId?: number;
+  latestPublishConfirmationTurnId?: number;
 }
 
 // ─── Module-level singletons ──────────────────────────────────────────────────
@@ -74,6 +77,20 @@ function getModelRegistry(): ModelRegistry {
     _modelRegistry = new ModelRegistry(getAuthStorage());
   }
   return _modelRegistry;
+}
+
+function isExplicitPublishConfirmation(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) {
+    return false;
+  }
+
+  if (/^(yes|yeah|yep|sure|ok|okay|please|go ahead|do it)$/i.test(normalized)) {
+    return true;
+  }
+
+  return /\b(publish|record|save)( this| it| the observation| the record)?\b/i.test(normalized) ||
+    /\bgo ahead\b/i.test(normalized);
 }
 
 // ─── Custom tool definitions ──────────────────────────────────────────────────
@@ -244,6 +261,8 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         params.userContext
       );
 
+      stateRef.state.latestIdentificationTurnId = stateRef.state.currentTurnId;
+
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
         details: {},
@@ -267,6 +286,26 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
             {
               type: "text" as const,
               text: JSON.stringify({ success: false, error: "No user context available" }),
+            },
+          ],
+          details: {},
+        };
+      }
+
+      const latestIdentificationTurnId = stateRef.state.latestIdentificationTurnId ?? 0;
+      const latestConfirmationTurnId = stateRef.state.latestPublishConfirmationTurnId ?? 0;
+
+      if (!latestConfirmationTurnId || latestConfirmationTurnId <= latestIdentificationTurnId) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                success: false,
+                error: "Publish confirmation required",
+                code: "publish_confirmation_required",
+                suggestion: "Ask the user to confirm publishing in a later turn before calling publish_occurrence.",
+              }),
             },
           ],
           details: {},
@@ -755,11 +794,14 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
 
   // Update per-session state with latest photo and user info
   const sessionState = sessions.get(msg.user.id)!;
+  sessionState.currentTurnId = (sessionState.currentTurnId ?? 0) + 1;
   sessionState.currentUser = {
     id: msg.user.id,
     username: msg.user.username,
     displayName: msg.user.displayName,
   };
+
+  const currentTurnId = sessionState.currentTurnId;
 
   if (msg.photo) {
     sessionState.photos.push({
@@ -768,12 +810,15 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     });
   }
 
+  let latestUserText: string | undefined;
+
   // Build the prompt text
   const userContext = `Message from ${msg.user.displayName} (Telegram user ID: ${msg.user.id})`;
   let promptText: string;
 
   if (msg.photo) {
     const userText = msg.text ? ` ${msg.text}` : "";
+    latestUserText = msg.text ?? undefined;
     promptText = `${userContext}\nThe user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}`;
   } else if (msg.voice) {
     const transcription = await transcribeVoice(
@@ -782,6 +827,7 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
       getConfig().geminiApiKey
     );
     if ("text" in transcription) {
+      latestUserText = transcription.text;
       promptText = `${userContext}\n[Voice note transcription]: ${transcription.text}`;
     } else {
       console.error("Voice transcription failed:", transcription.error);
@@ -790,10 +836,16 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   } else if (msg.location) {
     const { latitude, longitude } = msg.location;
     const userText = msg.text ? ` ${msg.text}` : "";
+    latestUserText = msg.text ?? undefined;
     promptText = `${userContext}\nThe user shared their GPS location: latitude ${latitude}, longitude ${longitude}.${userText}`;
   } else {
     const text = msg.text ?? "";
+    latestUserText = text;
     promptText = `${userContext}\n${text}`;
+  }
+
+  if (latestUserText && isExplicitPublishConfirmation(latestUserText)) {
+    sessionState.latestPublishConfirmationTurnId = currentTurnId;
   }
 
   // Collect response text from events

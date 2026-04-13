@@ -244,3 +244,10 @@ export function denyRequest(userId: number): boolean {
 export function getMembers(): WhitelistEntry[] {
   return [...cache.entries];
 }
+
+/**
+ * Return copy of admin entries.
+ */
+export function getAdmins(): WhitelistEntry[] {
+  return cache.entries.filter((e) => e.role === 'admin').map((e) => ({ ...e }));
+}
