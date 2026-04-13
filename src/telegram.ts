@@ -206,19 +206,32 @@ async function downloadTelegramFile(
 const START_WELCOME_TEXT =
   `🌿 <b>Hey! I'm Tainá</b> — your community biodiversity assistant.\n\n` +
   `I can identify species from photos, check forest health, get weather forecasts, ` +
-  `and even configure your AudioMoth recorder.\n\n` +
-  `Tap a button below to get started 👇`;
+  `and set up AudioMoth recorders.`;
 
-function buildStartKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text('🌿 Identify Species', 'action:identify')
-    .text('🌳 Forest Report', 'action:forest')
-    .row()
-    .text('🎙️ AudioMoth Setup', 'action:audiomoth')
-    .text('🌤️ Weather', 'action:weather')
-    .row()
-    .text('🔑 Request Access', 'action:join')
-    .text('🔄 Restart Chat', 'action:restart');
+function buildStartKeyboard(isAuthorizedUser: boolean): InlineKeyboard {
+  return isAuthorizedUser
+    ? new InlineKeyboard().text('📋 Open Commands', 'action:menu')
+    : new InlineKeyboard().text('🔑 Request Access', 'action:join');
+}
+
+function buildStartMessage(isAuthorizedUser: boolean): string {
+  if (isAuthorizedUser) {
+    return `${START_WELCOME_TEXT}\n\nUse the command menu below for quick actions.`;
+  }
+
+  return `${START_WELCOME_TEXT}\n\nIf you want to join the community, tap Request Access below.`;
+}
+
+type StartReply = (
+  text: string,
+  options?: { parse_mode?: "HTML"; reply_markup?: InlineKeyboard }
+) => Promise<unknown>;
+
+async function sendStartScreen(reply: StartReply, isAuthorizedUser: boolean): Promise<void> {
+  await reply(buildStartMessage(isAuthorizedUser), {
+    parse_mode: "HTML",
+    reply_markup: buildStartKeyboard(isAuthorizedUser),
+  });
 }
 
 // ─── Main Export ─────────────────────────────────────────────────────────────
@@ -286,41 +299,17 @@ export async function createTelegramBot(
 
       // ── Check for /start BEFORE the access gate (works for all users) ──
       if (commandName === "start" || commandName === "help" || commandName === "menu") {
-        // Send welcome with inline buttons
-        await ctx.reply(START_WELCOME_TEXT, {
-          parse_mode: "HTML",
-          reply_markup: buildStartKeyboard(),
-        });
+        await sendStartScreen((text, options) => ctx.reply(text, options), isAuthorized(user.id));
         return;
       }
 
       if (commandName === "restart") {
         resetSession(user.id);
-        await ctx.reply(START_WELCOME_TEXT, {
-          parse_mode: "HTML",
-          reply_markup: buildStartKeyboard(),
-        });
+        await sendStartScreen((text, options) => ctx.reply(text, options), isAuthorized(user.id));
         return;
       }
 
-      // ── Persistent keyboard shortcuts and command aliases ──
-      const persistentAction = rawTextForCommand.trim();
-      if (persistentAction === "📋 Menu") {
-        await ctx.reply(START_WELCOME_TEXT, {
-          parse_mode: "HTML",
-          reply_markup: buildStartKeyboard(),
-        });
-        return;
-      }
-      if (persistentAction === "🔄 Restart") {
-        resetSession(user.id);
-        await ctx.reply(START_WELCOME_TEXT, {
-          parse_mode: "HTML",
-          reply_markup: buildStartKeyboard(),
-        });
-        return;
-      }
-      if (persistentAction === "🌿 Identify" || commandName === "identify") {
+      if (commandName === "identify") {
         if (!isAuthorized(user.id)) {
           await ctx.reply("You need to join the community first! Send /join to request access 🌱");
           return;
@@ -337,7 +326,7 @@ export async function createTelegramBot(
         await onMessage(incoming);
         return;
       }
-      if (persistentAction === "🌳 Forest" || commandName === "forest") {
+      if (commandName === "forest") {
         if (!isAuthorized(user.id)) {
           await ctx.reply("You need to join the community first! Send /join to request access 🌱");
           return;
@@ -354,7 +343,7 @@ export async function createTelegramBot(
         await onMessage(incoming);
         return;
       }
-      if (persistentAction === '🎙️ AudioMoth' || commandName === "audiomoth") {
+      if (commandName === "audiomoth") {
         if (!isAuthorized(user.id)) {
           await ctx.reply('You need to join the community first! Send /join to request access 🌱');
           return;
@@ -371,7 +360,7 @@ export async function createTelegramBot(
         await onMessage(incoming);
         return;
       }
-      if (persistentAction === '🌤️ Weather' || commandName === "weather") {
+      if (commandName === "weather") {
         if (!isAuthorized(user.id)) {
           await ctx.reply('You need to join the community first! Send /join to request access 🌱');
           return;
@@ -712,6 +701,18 @@ export async function createTelegramBot(
           break;
         }
 
+        case 'action:menu': {
+          if (!authorized) {
+            await bot.api.sendMessage(chatId, 'You need to join the community first! Send /join to request access 🌱');
+            return;
+          }
+          await bot.api.sendMessage(
+            chatId,
+            'Use the command menu below for /identify, /forest, /weather, and /audiomoth 🌿'
+          );
+          break;
+        }
+
         case "action:join":
           if (authorized) {
             await bot.api.sendMessage(chatId, "You're already part of the community! 🌿");
@@ -729,9 +730,9 @@ export async function createTelegramBot(
 
         case "action:restart":
           resetSession(userId);
-          await ctx.reply(START_WELCOME_TEXT, {
+          await bot.api.sendMessage(chatId, buildStartMessage(authorized), {
             parse_mode: "HTML",
-            reply_markup: buildStartKeyboard(),
+            reply_markup: buildStartKeyboard(authorized),
           });
           break;
 
