@@ -6,7 +6,13 @@
 import { Bot, InputFile, InlineKeyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
 import { formatTelegramHtml } from "./telegram-format.js";
-import { ensurePreferredLanguage } from "./user-language.js";
+import { ensurePreferredLanguage, getPreferredLanguage } from "./user-language.js";
+import {
+  getTelegramLocaleBundle,
+  resolveSupportedLocale,
+  SUPPORTED_LOCALES,
+  type SupportedLocale,
+} from "./i18n.js";
 import { 
   isAuthorized, isAdmin, 
   addJoinRequest, approveRequest, denyRequest,
@@ -61,29 +67,6 @@ export type MessageHandler = (msg: IncomingMessage) => Promise<void>;
 
 const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
 
-type TelegramCommand = {
-  command: string;
-  description: string;
-};
-
-const MEMBER_COMMANDS: TelegramCommand[] = [
-  { command: "start", description: "Open the welcome screen" },
-  { command: "help", description: "Show the welcome screen" },
-  { command: "join", description: "Request access to the community" },
-  { command: "identify", description: "Identify a species from a photo" },
-  { command: "forest", description: "Get a forest health report" },
-  { command: "weather", description: "Check the weather forecast" },
-  { command: "audiomoth", description: "Set up an AudioMoth recorder" },
-  { command: "restart", description: "Reset this chat" },
-];
-
-const ADMIN_COMMANDS: TelegramCommand[] = [
-  { command: "pending", description: "List pending join requests" },
-  { command: "approve", description: "Approve a join request" },
-  { command: "remove", description: "Remove a member" },
-  { command: "members", description: "List community members" },
-];
-
 function parseTelegramCommand(text: string): string | undefined {
   const match = text.trim().match(/^\/([a-z0-9_]+)(?:@[\w_]+)?(?:\s|$)/i);
   return match?.[1].toLowerCase();
@@ -91,14 +74,24 @@ function parseTelegramCommand(text: string): string | undefined {
 
 async function registerTelegramCommands(bot: Bot): Promise<void> {
   try {
+    const commandCalls = SUPPORTED_LOCALES.flatMap((locale) => {
+      const bundle = getTelegramLocaleBundle(locale);
+      return [
+        bot.api.setMyCommands(bundle.commands.member, { scope: { type: "all_private_chats" }, language_code: locale }),
+        bot.api.setMyCommands(bundle.commands.member, { scope: { type: "all_group_chats" }, language_code: locale }),
+        bot.api.setMyCommands(bundle.commands.admin, { scope: { type: "all_chat_administrators" }, language_code: locale }),
+      ];
+    });
+
     await Promise.all([
-      bot.api.setMyCommands(MEMBER_COMMANDS, { scope: { type: "all_private_chats" } }),
-      bot.api.setMyCommands(MEMBER_COMMANDS, { scope: { type: "all_group_chats" } }),
-      bot.api.setMyCommands(ADMIN_COMMANDS, { scope: { type: "all_chat_administrators" } }),
+      ...commandCalls,
+      bot.api.setMyCommands(getTelegramLocaleBundle("en").commands.member, { scope: { type: "all_private_chats" } }),
+      bot.api.setMyCommands(getTelegramLocaleBundle("en").commands.member, { scope: { type: "all_group_chats" } }),
+      bot.api.setMyCommands(getTelegramLocaleBundle("en").commands.admin, { scope: { type: "all_chat_administrators" } }),
     ]);
   } catch (err) {
     console.warn("[telegram] Scoped commands unavailable, falling back to a shared menu:", err);
-    await bot.api.setMyCommands(MEMBER_COMMANDS);
+    await bot.api.setMyCommands(getTelegramLocaleBundle("en").commands.member);
   }
 }
 
@@ -111,22 +104,24 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function buildJoinRequestKeyboard(userId: number): InlineKeyboard {
+function buildJoinRequestKeyboard(locale: SupportedLocale, userId: number): InlineKeyboard {
+  const texts = getTelegramLocaleBundle(locale).texts;
   return new InlineKeyboard()
-    .text("✅ Approve", `admin:approve:${userId}`)
-    .text("❌ Deny", `admin:deny:${userId}`);
+    .text(texts.joinApprove, `admin:approve:${userId}`)
+    .text(texts.joinDeny, `admin:deny:${userId}`);
 }
 
-function buildJoinRequestMessage(displayName: string, username?: string, userId?: number): string {
+function buildJoinRequestMessage(locale: SupportedLocale, displayName: string, username?: string, userId?: number): string {
+  const texts = getTelegramLocaleBundle(locale).texts;
   const lines = [
-    "🆕 <b>New join request</b>",
+    texts.joinRequestTitle,
     "",
-    `<b>Name:</b> ${escapeHtml(displayName)}`,
-    `<b>Username:</b> ${username ? `@${escapeHtml(username)}` : "—"}`,
+    `${texts.joinRequestNameLabel} ${escapeHtml(displayName)}`,
+    `${texts.joinRequestUsernameLabel} ${username ? `@${escapeHtml(username)}` : "—"}`,
   ];
 
   if (userId !== undefined) {
-    lines.push(`<b>User ID:</b> <code>${userId}</code>`);
+    lines.push(`${texts.joinRequestUserIdLabel} <code>${userId}</code>`);
   }
 
   return lines.join("\n");
@@ -139,10 +134,11 @@ async function notifyAdminsOfJoinRequest(
   const admins = getAdmins();
   if (admins.length === 0) return;
 
-  const message = buildJoinRequestMessage(request.displayName, request.username, request.userId);
-  const keyboard = buildJoinRequestKeyboard(request.userId);
-
   for (const admin of admins) {
+    const locale = resolveSupportedLocale(getPreferredLanguage(admin.userId));
+    const message = buildJoinRequestMessage(locale, request.displayName, request.username, request.userId);
+    const keyboard = buildJoinRequestKeyboard(locale, request.userId);
+
     try {
       await bot.api.sendMessage(admin.userId, message, {
         parse_mode: "HTML",
@@ -206,23 +202,20 @@ async function downloadTelegramFile(
 
 // ─── Start Screen ─────────────────────────────────────────────────────────────
 
-const START_WELCOME_TEXT =
-  `🌿 <b>Hey! I'm Tainá</b> — your community biodiversity assistant.\n\n` +
-  `I can identify species from photos, check forest health, get weather forecasts, ` +
-  `and set up AudioMoth recorders.`;
-
-function buildStartKeyboard(isAuthorizedUser: boolean): InlineKeyboard {
+function buildStartKeyboard(locale: SupportedLocale, isAuthorizedUser: boolean): InlineKeyboard {
+  const texts = getTelegramLocaleBundle(locale).texts;
   return isAuthorizedUser
-    ? new InlineKeyboard().text('📋 Open Commands', 'action:menu')
-    : new InlineKeyboard().text('🔑 Request Access', 'action:join');
+    ? new InlineKeyboard().text(texts.openCommands, 'action:menu')
+    : new InlineKeyboard().text(texts.requestAccess, 'action:join');
 }
 
-function buildStartMessage(isAuthorizedUser: boolean): string {
+function buildStartMessage(locale: SupportedLocale, isAuthorizedUser: boolean): string {
+  const texts = getTelegramLocaleBundle(locale).texts;
   if (isAuthorizedUser) {
-    return `${START_WELCOME_TEXT}\n\nUse the command menu below for quick actions.`;
+    return `${texts.startWelcome}\n\n${texts.startAuthorizedHint}`;
   }
 
-  return `${START_WELCOME_TEXT}\n\nIf you want to join the community, tap Request Access below.`;
+  return `${texts.startWelcome}\n\n${texts.startUnauthorizedHint}`;
 }
 
 type StartReply = (
@@ -230,10 +223,10 @@ type StartReply = (
   options?: { parse_mode?: "HTML"; reply_markup?: InlineKeyboard }
 ) => Promise<unknown>;
 
-async function sendStartScreen(reply: StartReply, isAuthorizedUser: boolean): Promise<void> {
-  await reply(buildStartMessage(isAuthorizedUser), {
+async function sendStartScreen(reply: StartReply, locale: SupportedLocale, isAuthorizedUser: boolean): Promise<void> {
+  await reply(buildStartMessage(locale, isAuthorizedUser), {
     parse_mode: "HTML",
-    reply_markup: buildStartKeyboard(isAuthorizedUser),
+    reply_markup: buildStartKeyboard(locale, isAuthorizedUser),
   });
 }
 
@@ -280,6 +273,7 @@ export async function createTelegramBot(
   // ─── Message handler ───────────────────────────────────────────────────────
 
   bot.on("message", async (ctx) => {
+    let locale: SupportedLocale = "en";
     try {
       const msg = ctx.message;
       if (!msg || !msg.from) return;
@@ -294,7 +288,8 @@ export async function createTelegramBot(
         displayName,
       };
 
-      ensurePreferredLanguage(user.id, languageCode);
+      const preferredLanguage = ensurePreferredLanguage(user.id, languageCode);
+      locale = resolveSupportedLocale(preferredLanguage, languageCode);
 
       const chatType = msg.chat.type; // "private" | "group" | "supergroup" | "channel"
       const isGroup = chatType === "group" || chatType === "supergroup";
@@ -305,19 +300,19 @@ export async function createTelegramBot(
 
       // ── Check for /start BEFORE the access gate (works for all users) ──
       if (commandName === "start" || commandName === "help" || commandName === "menu") {
-        await sendStartScreen((text, options) => ctx.reply(text, options), isAuthorized(user.id));
+        await sendStartScreen((text, options) => ctx.reply(text, options), locale, isAuthorized(user.id));
         return;
       }
 
       if (commandName === "restart") {
         resetSession(user.id);
-        await sendStartScreen((text, options) => ctx.reply(text, options), isAuthorized(user.id));
+        await sendStartScreen((text, options) => ctx.reply(text, options), locale, isAuthorized(user.id));
         return;
       }
 
       if (commandName === "identify") {
         if (!isAuthorized(user.id)) {
-          await ctx.reply("You need to join the community first! Send /join to request access 🌱");
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.needJoin);
           return;
         }
         const incoming: IncomingMessage = {
@@ -335,7 +330,7 @@ export async function createTelegramBot(
       }
       if (commandName === "forest") {
         if (!isAuthorized(user.id)) {
-          await ctx.reply("You need to join the community first! Send /join to request access 🌱");
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.needJoin);
           return;
         }
         const incoming: IncomingMessage = {
@@ -353,7 +348,7 @@ export async function createTelegramBot(
       }
       if (commandName === "audiomoth") {
         if (!isAuthorized(user.id)) {
-          await ctx.reply('You need to join the community first! Send /join to request access 🌱');
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.needJoin);
           return;
         }
         const incoming: IncomingMessage = {
@@ -371,7 +366,7 @@ export async function createTelegramBot(
       }
       if (commandName === "weather") {
         if (!isAuthorized(user.id)) {
-          await ctx.reply('You need to join the community first! Send /join to request access 🌱');
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.needJoin);
           return;
         }
         const incoming: IncomingMessage = {
@@ -391,14 +386,14 @@ export async function createTelegramBot(
       // ── Check for /join BEFORE the access gate (unauthorized users can use this) ──
       if (commandName === "join") {
         if (isAuthorized(user.id)) {
-          await ctx.reply('You\'re already part of the community! 🌿');
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.alreadyMember);
         } else {
           const added = addJoinRequest(user.id, user.displayName, user.username);
           if (added) {
-            await ctx.reply('Got it! I\'ll let the admins know you want to join 🙌');
+            await ctx.reply(getTelegramLocaleBundle(locale).texts.joinRequested);
             await notifyAdminsOfJoinRequest(bot, { userId: user.id, displayName: user.displayName, username: user.username });
           } else {
-            await ctx.reply('You already have a pending request. Hang tight! ⏳');
+            await ctx.reply(getTelegramLocaleBundle(locale).texts.pendingRequest);
           }
         }
         return;
@@ -408,9 +403,7 @@ export async function createTelegramBot(
       if (!isAuthorized(user.id)) {
         // Don't spam groups — only reply in DMs
         if (!isGroup) {
-          await ctx.reply(
-            'Hey! 👋 I don\'t recognize you yet. Ask a community admin to add you, or send /join to request access.'
-          );
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.notRecognized);
         }
         return;
       }
@@ -418,7 +411,7 @@ export async function createTelegramBot(
       // ── Admin commands ─────────────────────────────────────────────────────
       if (commandName === "approve") {
         if (!isAdmin(user.id)) {
-          await ctx.reply('Only admins can approve members.');
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.onlyAdminsApprove);
           return;
         }
         const targetId = parseInt(rawTextForCommand.trim().split(/\s+/)[1], 10);
@@ -430,32 +423,34 @@ export async function createTelegramBot(
             const approved = approveRequest(req.userId, user.id);
             if (approved) {
               const name = req.displayName + (req.username ? ` (@${req.username})` : "");
-              await ctx.reply(`✅ ${name} approved! They can now use the bot.`);
+              await ctx.reply(getTelegramLocaleBundle(locale).texts.approvedUser(name));
               try {
-                await bot.api.sendMessage(req.userId, "Welcome to the community! You can now talk to me 🌿🎉");
+                const userLocale = resolveSupportedLocale(getPreferredLanguage(req.userId));
+                await bot.api.sendMessage(req.userId, getTelegramLocaleBundle(userLocale).texts.welcomeApproved);
               } catch { /* user may not have started DM with bot */ }
             }
           } else if (requests.length === 0) {
-            await ctx.reply("No pending requests to approve 👍");
+            await ctx.reply(getTelegramLocaleBundle(locale).texts.noPendingToApprove);
           } else {
-            await ctx.reply(`There are ${requests.length} pending requests. Use /pending to see them and approve individually.`);
+            await ctx.reply(getTelegramLocaleBundle(locale).texts.multiplePendingToApprove(requests.length));
           }
           return;
         }
         const approved = approveRequest(targetId, user.id);
         if (approved) {
-          await ctx.reply(`✅ User ${targetId} approved! They can now use the bot.`);
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.approvedUserId(targetId));
           // Try to notify the approved user
           try {
-            await bot.api.sendMessage(targetId, 'Welcome to the community! You can now talk to me 🌿🎉');
+            const userLocale = resolveSupportedLocale(getPreferredLanguage(targetId));
+            await bot.api.sendMessage(targetId, getTelegramLocaleBundle(userLocale).texts.welcomeApproved);
           } catch { /* user may not have started DM with bot */ }
         } else {
           // Maybe they're not in pending — try direct add
           const added = addMember(targetId, user.id);
           if (added) {
-            await ctx.reply(`✅ User ${targetId} added as member.`);
+            await ctx.reply(getTelegramLocaleBundle(locale).texts.userAdded(targetId));
           } else {
-            await ctx.reply(`User ${targetId} is already a member.`);
+            await ctx.reply(getTelegramLocaleBundle(locale).texts.alreadyMemberId(targetId));
           }
         }
         return;
@@ -463,36 +458,36 @@ export async function createTelegramBot(
 
       if (commandName === "remove") {
         if (!isAdmin(user.id)) {
-          await ctx.reply('Only admins can remove members.');
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.onlyAdminsRemove);
           return;
         }
         const targetId = parseInt(rawTextForCommand.trim().split(/\s+/)[1], 10);
         if (isNaN(targetId)) {
-          await ctx.reply('Usage: /remove <user_id>');
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.removeUsage);
           return;
         }
         const removed = removeMember(targetId);
         if (removed) {
-          await ctx.reply(`Removed user ${targetId}.`);
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.removedUser(targetId));
         } else {
-          await ctx.reply(`Could not remove user ${targetId}. They may be an admin or not a member.`);
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.couldNotRemoveUser(targetId));
         }
         return;
       }
 
       if (commandName === "pending") {
         if (!isAdmin(user.id)) {
-          await ctx.reply("Only admins can view pending requests.");
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.onlyAdminsViewPending);
           return;
         }
         const requests = getPendingRequests();
         if (requests.length === 0) {
-          await ctx.reply("No pending requests 👍");
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.noPendingRequests);
         } else {
-          await ctx.reply(`📋 <b>${requests.length} pending request${requests.length > 1 ? "s" : ""}:</b>`, { parse_mode: "HTML" });
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.pendingRequestsHeader(requests.length), { parse_mode: "HTML" });
           for (const r of requests) {
             const name = r.displayName + (r.username ? ` (@${r.username})` : "");
-            const keyboard = buildJoinRequestKeyboard(r.userId);
+            const keyboard = buildJoinRequestKeyboard(locale, r.userId);
             await ctx.reply(name, { reply_markup: keyboard });
           }
         }
@@ -501,14 +496,14 @@ export async function createTelegramBot(
 
       if (commandName === "members") {
         if (!isAdmin(user.id)) {
-          await ctx.reply('Only admins can view the member list.');
+          await ctx.reply(getTelegramLocaleBundle(locale).texts.onlyAdminsViewMembers);
           return;
         }
         const members = getMembers();
         const lines = members.map(m =>
           `• ${m.displayName ?? 'Unknown'} (${m.role}) — ID: ${m.userId}`
         );
-        await ctx.reply(`Community members:\n${lines.join('\n')}`);
+        await ctx.reply(`${getTelegramLocaleBundle(locale).texts.communityMembersHeader}\n${lines.join('\n')}`);
         return;
       }
 
@@ -611,7 +606,7 @@ export async function createTelegramBot(
     } catch (err) {
       console.error("Error in message handler:", err);
       try {
-        await ctx.reply("Sorry, something went wrong. Please try again. 🙏");
+        await ctx.reply(getTelegramLocaleBundle(locale).texts.callbackSomethingWentWrong);
       } catch (replyErr) {
         console.error("Failed to send error reply:", replyErr);
       }
@@ -633,7 +628,8 @@ export async function createTelegramBot(
       const languageCode = from.language_code;
       const authorized = isAuthorized(userId);
 
-      ensurePreferredLanguage(userId, languageCode);
+      const preferredLanguage = ensurePreferredLanguage(userId, languageCode);
+      const locale = resolveSupportedLocale(preferredLanguage, languageCode);
 
       // Always acknowledge the callback to remove the loading spinner
       await ctx.answerCallbackQuery();
@@ -641,7 +637,7 @@ export async function createTelegramBot(
         switch (data) {
         case "action:identify": {
           if (!authorized) {
-            await bot.api.sendMessage(chatId, "You need to join the community first! Send /join to request access 🌱");
+            await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.needJoin);
             return;
           }
           const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
@@ -661,7 +657,7 @@ export async function createTelegramBot(
 
         case "action:forest": {
           if (!authorized) {
-            await bot.api.sendMessage(chatId, "You need to join the community first! Send /join to request access 🌱");
+            await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.needJoin);
             return;
           }
           const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
@@ -681,7 +677,7 @@ export async function createTelegramBot(
 
         case 'action:audiomoth': {
           if (!authorized) {
-            await bot.api.sendMessage(chatId, 'You need to join the community first! Send /join to request access 🌱');
+            await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.needJoin);
             return;
           }
           const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
@@ -701,7 +697,7 @@ export async function createTelegramBot(
 
         case 'action:weather': {
           if (!authorized) {
-            await bot.api.sendMessage(chatId, 'You need to join the community first! Send /join to request access 🌱');
+            await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.needJoin);
             return;
           }
           const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
@@ -721,36 +717,36 @@ export async function createTelegramBot(
 
         case 'action:menu': {
           if (!authorized) {
-            await bot.api.sendMessage(chatId, 'You need to join the community first! Send /join to request access 🌱');
+            await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.needJoin);
             return;
           }
           await bot.api.sendMessage(
             chatId,
-            'Use the command menu below for /identify, /forest, /weather, and /audiomoth 🌿'
+            getTelegramLocaleBundle(locale).texts.menuGuidance
           );
           break;
         }
 
         case "action:join":
           if (authorized) {
-            await bot.api.sendMessage(chatId, "You're already part of the community! 🌿");
+            await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.alreadyMember);
           } else {
             const displayName = `${from.first_name} ${from.last_name ?? ""}`.trim();
             const added = addJoinRequest(userId, displayName, from.username);
             if (added) {
-              await bot.api.sendMessage(chatId, "Got it! I'll let the admins know you want to join 🙌");
+              await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.joinRequested);
               await notifyAdminsOfJoinRequest(bot, { userId, displayName, username: from.username });
             } else {
-              await bot.api.sendMessage(chatId, "You already have a pending request. Hang tight! ⏳");
+              await bot.api.sendMessage(chatId, getTelegramLocaleBundle(locale).texts.pendingRequest);
             }
           }
           break;
 
         case "action:restart":
           resetSession(userId);
-          await bot.api.sendMessage(chatId, buildStartMessage(authorized), {
+          await bot.api.sendMessage(chatId, buildStartMessage(locale, authorized), {
             parse_mode: "HTML",
-            reply_markup: buildStartKeyboard(authorized),
+            reply_markup: buildStartKeyboard(locale, authorized),
           });
           break;
 
@@ -758,7 +754,7 @@ export async function createTelegramBot(
           // Handle admin:approve:<userId> and admin:deny:<userId> callbacks
           if (data.startsWith("admin:approve:") || data.startsWith("admin:deny:")) {
             if (!isAdmin(userId)) {
-              await ctx.answerCallbackQuery({ text: "Only admins can do this" });
+              await ctx.answerCallbackQuery({ text: getTelegramLocaleBundle(locale).texts.callbackOnlyAdmins });
               return;
             }
             const parts = data.split(":");
@@ -771,30 +767,31 @@ export async function createTelegramBot(
               if (approved) {
                 // Edit the original message to show it was approved
                 try {
-                  await ctx.editMessageText(`✅ Approved!`, { reply_markup: undefined });
+                  await ctx.editMessageText(getTelegramLocaleBundle(locale).texts.callbackApproved, { reply_markup: undefined });
                 } catch { /* message may be too old to edit */ }
                 try {
-                  await bot.api.sendMessage(targetId, "Welcome to the community! You can now talk to me 🌿🎉");
+                  const userLocale = resolveSupportedLocale(getPreferredLanguage(targetId));
+                  await bot.api.sendMessage(targetId, getTelegramLocaleBundle(userLocale).texts.welcomeApproved);
                 } catch { /* user may not have started DM with bot */ }
               } else {
                 // Not in pending — try direct add
                 const added = addMember(targetId, userId);
                 if (added) {
                   try {
-                    await ctx.editMessageText(`✅ Added as member`, { reply_markup: undefined });
+                    await ctx.editMessageText(getTelegramLocaleBundle(locale).texts.callbackAdded, { reply_markup: undefined });
                   } catch { /* ignore */ }
                 } else {
-                  await ctx.answerCallbackQuery({ text: "Already a member" });
+                  await ctx.answerCallbackQuery({ text: getTelegramLocaleBundle(locale).texts.callbackAlreadyMember });
                 }
               }
             } else if (action === "deny") {
               const denied = denyRequest(targetId);
               if (denied) {
                 try {
-                  await ctx.editMessageText(`❌ Denied`, { reply_markup: undefined });
+                  await ctx.editMessageText(getTelegramLocaleBundle(locale).texts.callbackDenied, { reply_markup: undefined });
                 } catch { /* ignore */ }
               } else {
-                await ctx.answerCallbackQuery({ text: "Request not found" });
+                await ctx.answerCallbackQuery({ text: getTelegramLocaleBundle(locale).texts.callbackRequestNotFound });
               }
             }
             return;
@@ -805,7 +802,8 @@ export async function createTelegramBot(
     } catch (err) {
       console.error("Error in callback_query handler:", err);
       try {
-        await ctx.answerCallbackQuery({ text: "Something went wrong 🙏" });
+        const locale = resolveSupportedLocale(getPreferredLanguage(ctx.callbackQuery.from.id), ctx.callbackQuery.from.language_code);
+        await ctx.answerCallbackQuery({ text: getTelegramLocaleBundle(locale).texts.callbackSomethingWentWrong });
       } catch { /* ignore */ }
     }
   });
