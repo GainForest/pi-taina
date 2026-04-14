@@ -38,6 +38,7 @@ interface SessionState {
   currentTurnHasPhoto?: boolean;
   currentTurnHasUserContext?: boolean;
   latestIdentificationTurnId?: number;
+  latestIdentificationAgreementTurnId?: number;
   latestPublishConfirmationTurnId?: number;
 }
 
@@ -94,6 +95,16 @@ function isExplicitPublishConfirmation(text: string): boolean {
 
   return /\b(publish|record|save)( this| it| the observation| the record)?\b/i.test(normalized) ||
     /\bgo ahead\b/i.test(normalized);
+}
+
+function isExplicitIdentificationAgreement(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) {
+    return false;
+  }
+
+  return /\b(sounds? right|looks? right|seems? right|that'?s right|that'?s it|correct|exactly|yep|yeah|yes)\b/i.test(normalized) ||
+    /\b(it'?s|it is) (right|correct|good)\b/i.test(normalized);
 }
 
 function hasMeaningfulUserContext(text?: string): boolean {
@@ -342,7 +353,42 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       }
 
       const latestIdentificationTurnId = stateRef.state.latestIdentificationTurnId ?? 0;
+      const latestIdentificationAgreementTurnId = stateRef.state.latestIdentificationAgreementTurnId ?? 0;
       const latestConfirmationTurnId = stateRef.state.latestPublishConfirmationTurnId ?? 0;
+
+      if (!latestIdentificationTurnId) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                success: false,
+                error: "Identification required before publishing",
+                code: "identification_required",
+                suggestion: "Identify the species first, then ask whether it sounds right before publishing.",
+              }),
+            },
+          ],
+          details: {},
+        };
+      }
+
+      if (!latestIdentificationAgreementTurnId || latestIdentificationAgreementTurnId <= latestIdentificationTurnId) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                success: false,
+                error: "Identification agreement required",
+                code: "identification_agreement_required",
+                suggestion: "Ask whether the identification sounds right before publishing.",
+              }),
+            },
+          ],
+          details: {},
+        };
+      }
 
       if (!latestConfirmationTurnId || latestConfirmationTurnId <= latestIdentificationTurnId) {
         return {
@@ -908,6 +954,10 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
 
   if (latestUserText && isExplicitPublishConfirmation(latestUserText)) {
     sessionState.latestPublishConfirmationTurnId = currentTurnId;
+  }
+
+  if (latestUserText && isExplicitIdentificationAgreement(latestUserText)) {
+    sessionState.latestIdentificationAgreementTurnId = currentTurnId;
   }
 
   // Collect response text from events
