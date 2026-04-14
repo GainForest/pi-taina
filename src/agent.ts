@@ -35,6 +35,8 @@ interface SessionState {
   pendingChart?: Buffer;
   pendingAudio?: { data: Buffer; filename: string; caption: string };
   currentTurnId?: number;
+  currentTurnHasPhoto?: boolean;
+  currentTurnHasUserContext?: boolean;
   latestIdentificationTurnId?: number;
   latestPublishConfirmationTurnId?: number;
 }
@@ -92,6 +94,10 @@ function isExplicitPublishConfirmation(text: string): boolean {
 
   return /\b(publish|record|save)( this| it| the observation| the record)?\b/i.test(normalized) ||
     /\bgo ahead\b/i.test(normalized);
+}
+
+function hasMeaningfulUserContext(text?: string): boolean {
+  return Boolean(text && text.trim().length > 0);
 }
 
 function detectExplicitLanguagePreference(text: string): string | undefined {
@@ -267,6 +273,27 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
               text: JSON.stringify({
                 error: "No photo available",
                 suggestion: "Ask the user to send a photo first",
+              }),
+            },
+          ],
+          details: {},
+        };
+      }
+
+      const isFreshPhotoOnlyMessage =
+        stateRef.state.currentTurnHasPhoto === true && stateRef.state.currentTurnHasUserContext !== true;
+
+      if (isFreshPhotoOnlyMessage) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                success: false,
+                error: "Community context required before identification",
+                code: "identify_context_required",
+                suggestion:
+                  "Ask the user what they already know, what they noticed, or any story/context about the organism, or ask permission to try the ID next.",
               }),
             },
           ],
@@ -875,6 +902,9 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   // Build the prompt text
   const userContext = `Message from ${msg.user.displayName} (Telegram user ID: ${msg.user.id})`;
   const promptText = `${userContext}${languageGuidance}\n${promptBody}`;
+
+  sessionState.currentTurnHasPhoto = Boolean(msg.photo);
+  sessionState.currentTurnHasUserContext = hasMeaningfulUserContext(latestUserText);
 
   if (latestUserText && isExplicitPublishConfirmation(latestUserText)) {
     sessionState.latestPublishConfirmationTurnId = currentTurnId;
