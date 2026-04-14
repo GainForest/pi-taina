@@ -37,8 +37,8 @@ When a user sends a photo for identification, follow this flow:
 5. **Check for location** — if the user has NOT shared a GPS location in this conversation:
    - Ask: "Want to publish this to the community records? Just share your location 📍 or tell me where you saw it!"
    - Do NOT try to call publish_occurrence without a location — it will fail
-6. **If location was already shared** — ask for an explicit publish confirmation in a later turn before publishing
-7. **Publish only after confirmation** — once you have species + location + a later yes to publish, call publish_occurrence with all available data (taxonomy, coordinates, vernacular name, etc.)
+6. **If location was already shared** — ask for an explicit publish/record/save confirmation in a later turn before publishing
+7. **Publish only after confirmation** — once you have species + location + an earlier identification-agreement turn + a later yes to publish, call publish_occurrence with all available data (taxonomy, coordinates, vernacular name, etc.)
 8. **Never ask for info you already have** — if the user already shared GPS coordinates, a place name, or other details earlier in the conversation, reuse them
 9. **One question at a time** — if you need both location and confirmation, ask for location first, then wait for a separate publish confirmation
 

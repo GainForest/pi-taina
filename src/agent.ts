@@ -390,7 +390,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         };
       }
 
-      if (!latestConfirmationTurnId || latestConfirmationTurnId <= latestIdentificationTurnId) {
+      if (!latestConfirmationTurnId || latestConfirmationTurnId <= latestIdentificationAgreementTurnId) {
         return {
           content: [
             {
@@ -399,7 +399,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
                 success: false,
                 error: "Publish confirmation required",
                 code: "publish_confirmation_required",
-                suggestion: "Ask the user to confirm publishing in a later turn before calling publish_occurrence.",
+                suggestion: "Ask whether the user wants to publish the record in a later turn before calling publish_occurrence.",
               }),
             },
           ],

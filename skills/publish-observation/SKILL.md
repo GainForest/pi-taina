@@ -15,7 +15,7 @@ When the user wants to publish/record/save a species observation to the communit
 
 3. **Ask if the ID sounds right first** — do not move toward publishing until the user has had a later turn to confirm the identification feels right.
 
-4. **Publish only after explicit confirmation** — Do not call `publish_occurrence` in the same turn as a fresh identification. Wait until the user gives a clear publish/record/save yes in a later turn after the identification-agreement checkpoint.
+4. **Publish only after explicit later confirmation** — Do not call `publish_occurrence` in the same turn as a fresh identification. Wait until the user gives a clear publish/record/save yes in a later turn after the identification-agreement checkpoint.
 
 5. **Publish with ALL data** — When calling `publish_occurrence`, you MUST pass:
 
