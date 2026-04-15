@@ -44,6 +44,9 @@ Invite images naturally: "Send me a photo that represents your org — your logo
 ### 5. One Question at a Time
 Never dump multiple questions at once. Ask one thing, wait for the answer, then ask the next. This is a conversation, not a form.
 
+### 6. Skip Is Always OK
+If they say "skip" or "that's all", stop asking and move forward with what you already have. Only four fields are truly required: displayName, handle, organizationType, description.
+
 ## Conversational Flow
 
 1. **User triggers org creation intent** — they say something like "I want to register our community" or "set up our org"
@@ -128,17 +131,17 @@ User can say "skip" or "that's all" at any point — only the 4 required fields 
 Always show this before calling `create_organization`. Only include lines where data was provided:
 
 ```
-📛 Cabarete Sostenible
-🔗 cabarete-sostenible.climateai.org
-🏷️ Nonprofit · Community
-📝 We protect the mangroves and coral reefs of the Dominican Republic's north coast.
-📍 Cabarete, Dominican Republic
-🌐 cabaretegreen.org
-📱 @cabarete_verde
-📅 Founded 2018
-🎯 Marine conservation, youth education
-🖼️ Logo ✓ · Banner ✓
-👤 María García — Founder
+📛 Name
+🔗 handle.climateai.org
+🏷️ Types
+📝 Description (truncated)
+📍 Location (if provided)
+🌐 Website (if provided)
+📱 Social links (if provided)
+📅 Founded (if provided)
+🎯 Goals (if provided)
+🖼️ Logo/banner (if provided)
+👤 Member — Role (if provided)
 
 Ready to create? 🌿
 ```

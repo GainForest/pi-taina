@@ -34,6 +34,11 @@ interface SessionState {
   currentUser?: TelegramUser;
   pendingChart?: Buffer;
   pendingAudio?: { data: Buffer; filename: string; caption: string };
+  pendingPolygonWebApp?: {
+    launchMessageText: string;
+    buttonLabel: string;
+    webAppUrl: string;
+  };
   currentTurnId?: number;
   currentTurnHasPhoto?: boolean;
   currentTurnHasUserContext?: boolean;
@@ -1009,6 +1014,24 @@ export function getPendingAudio(userId: number): { data: Buffer; filename: strin
     const audio = state.pendingAudio;
     state.pendingAudio = undefined; // consume it
     return audio;
+  }
+  return undefined;
+}
+
+// ─── Pending polygon Web App ──────────────────────────────────────────────────
+
+/**
+ * Consume and return the pending polygon Web App action for a user (one-time use).
+ * Returns undefined if no Web App launch is pending.
+ */
+export function getPendingPolygonWebApp(
+  userId: number
+): { launchMessageText: string; buttonLabel: string; webAppUrl: string } | undefined {
+  const state = sessions.get(userId);
+  if (state?.pendingPolygonWebApp) {
+    const pending = state.pendingPolygonWebApp;
+    state.pendingPolygonWebApp = undefined; // consume it
+    return pending;
   }
   return undefined;
 }

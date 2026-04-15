@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { loadEnvConfig, isAtprotoConfigured, isGfwConfigured } from "./env.js";
 import { createTelegramBot, type TelegramBotApi } from "./telegram.js";
-import { sendToAgent, disposeAllSessions, getPendingChart, getPendingAudio } from "./agent.js";
+import { sendToAgent, disposeAllSessions, getPendingChart, getPendingAudio, getPendingPolygonWebApp } from "./agent.js";
 import { getAtprotoAgent, getCommunityDid } from "./atproto.js";
 import { initOrgContext } from "./hyperindex.js";
 import { initWhitelist } from './whitelist.js';
@@ -60,6 +60,18 @@ async function main() {
           await bot.reply(msg.chatId, response, {
             replyToMessageId: msg.isGroup ? msg.messageId : undefined,
           });
+        }
+
+        // Send pending polygon Web App button if available (best-effort)
+        const pendingPolygonWebApp = getPendingPolygonWebApp(msg.user.id);
+        if (pendingPolygonWebApp) {
+          await bot.sendWebAppButton(
+            msg.chatId,
+            pendingPolygonWebApp.launchMessageText,
+            pendingPolygonWebApp.buttonLabel,
+            pendingPolygonWebApp.webAppUrl,
+            msg.isGroup ? msg.messageId : undefined,
+          );
         }
 
         // Send pending chart photo if available (best-effort)

@@ -26,6 +26,12 @@ export interface IncomingMessage {
   chatId: number;
   messageId: number;
   text?: string;
+  // Telegram Web App payload (if user submitted polygon data from the org-area Web App)
+  webAppData?: {
+    rawPayload: string;
+    fromTelegramWebApp: boolean;
+    buttonText?: string;
+  };
   // Photo data (if user sent a photo)
   photo?: {
     data: Buffer;
@@ -572,10 +578,11 @@ export async function createTelegramBot(
       const hasPhoto = !!(msg.photo && msg.photo.length > 0);
       const hasLocation = !!(msg.location || msg.venue);
       const hasVoice = !!(msg.voice);
+      const hasWebAppData = !!msg.web_app_data;
 
       // ── Group filtering ────────────────────────────────────────────────────
-      // In groups, only forward if @mentioned, photo sent, location sent, or voice sent
-      if (isGroup && !isMentioned && !hasPhoto && !hasLocation && !hasVoice) {
+      // In groups, only forward if @mentioned, photo sent, location sent, voice sent, or Web App data arrived
+      if (isGroup && !isMentioned && !hasPhoto && !hasLocation && !hasVoice && !hasWebAppData) {
         return;
       }
 
@@ -583,7 +590,7 @@ export async function createTelegramBot(
       const incoming: IncomingMessage = {
         chatId: msg.chat.id,
         messageId: msg.message_id,
-        text: rawText || undefined,
+        text: rawText || (hasWebAppData ? "The user submitted polygon data from the organization-area Telegram Web App. The raw payload is attached on this message so the conversation can continue before dedicated polygon tooling is used." : undefined),
         user,
         languageCode,
         isGroup,
@@ -630,6 +637,15 @@ export async function createTelegramBot(
           console.error("Failed to download voice note:", err);
           // Continue without voice data
         }
+      }
+
+      // ── Telegram Web App payload handling ────────────────────────────────
+      if (msg.web_app_data) {
+        incoming.webAppData = {
+          rawPayload: msg.web_app_data.data,
+          fromTelegramWebApp: true,
+          buttonText: msg.web_app_data.button_text,
+        };
       }
 
       // ── Location handling ──────────────────────────────────────────────────
