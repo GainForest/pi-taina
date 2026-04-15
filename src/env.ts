@@ -23,6 +23,9 @@ export interface EnvConfig {
 
   // GFW Data API (optional — enables forest monitoring features)
   gfwDataApiKey: string | undefined;
+
+  // Polygon Web App (optional — enables organization territory capture)
+  polygonWebAppBaseUrl: string;
 }
 
 // Validate required env vars and return typed config
@@ -67,6 +70,9 @@ export function loadEnvConfig(): EnvConfig {
     speciesIdModel: process.env.SPECIES_ID_MODEL || "gemini-3.1-pro-preview",
 
     gfwDataApiKey: process.env.GFW_DATA_API_KEY || undefined,
+
+    polygonWebAppBaseUrl:
+      process.env.POLYGON_WEB_APP_BASE_URL || "https://polygons-gainforest.vercel.app",
   };
 }
 

@@ -70,6 +70,7 @@ async function loginAtproto(): Promise<AtpAgent> {
     piModel: 'google/gemini-2.5-flash',
     speciesIdModel: 'gemini-2.5-flash',
     gfwDataApiKey: undefined,
+    polygonWebAppBaseUrl: 'https://polygons-gainforest.vercel.app',
     adminUserId: 0,
   };
 

@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { loadEnvConfig, isAtprotoConfigured, isGfwConfigured } from "./env.js";
-import { createTelegramBot } from "./telegram.js";
+import { createTelegramBot, type TelegramBotApi } from "./telegram.js";
 import { sendToAgent, disposeAllSessions, getPendingChart, getPendingAudio } from "./agent.js";
 import { getAtprotoAgent, getCommunityDid } from "./atproto.js";
 import { initOrgContext } from "./hyperindex.js";
@@ -46,7 +46,7 @@ async function main() {
 
   // 3. Start Telegram bot
   console.log("🤖 Starting Tainá Telegram bot...");
-  const bot = await createTelegramBot(async (msg) => {
+  const bot: TelegramBotApi = await createTelegramBot(async (msg) => {
     try {
       // Show typing indicator while processing
       await bot.sendTyping(msg.chatId);

@@ -251,6 +251,28 @@ type StartReply = (
   options?: { parse_mode?: "HTML"; reply_markup?: InlineKeyboard }
 ) => Promise<unknown>;
 
+export interface TelegramBotApi {
+  reply: (
+    chatId: number,
+    text: string,
+    options?: {
+      replyToMessageId?: number;
+      parseMode?: "HTML" | "Markdown" | "MarkdownV2";
+    }
+  ) => Promise<void>;
+  sendWebAppButton: (
+    chatId: number,
+    text: string,
+    buttonLabel: string,
+    webAppUrl: string,
+    replyToMessageId?: number
+  ) => Promise<void>;
+  sendPhoto: (chatId: number, photo: Buffer, caption?: string) => Promise<void>;
+  sendAudio: (chatId: number, audio: Buffer, filename: string, caption?: string) => Promise<void>;
+  sendTyping: (chatId: number) => Promise<void>;
+  stop: () => void;
+}
+
 async function sendStartScreen(reply: StartReply, locale: SupportedLocale, isAuthorizedUser: boolean): Promise<void> {
   await reply(buildStartMessage(locale, isAuthorizedUser), {
     parse_mode: "HTML",
@@ -270,20 +292,7 @@ async function sendStartScreen(reply: StartReply, locale: SupportedLocale, isAut
 export async function createTelegramBot(
   onMessage: MessageHandler,
   config: EnvConfig
-): Promise<{
-  reply: (
-    chatId: number,
-    text: string,
-    options?: {
-      replyToMessageId?: number;
-      parseMode?: "HTML" | "Markdown" | "MarkdownV2";
-    }
-  ) => Promise<void>;
-  sendPhoto: (chatId: number, photo: Buffer, caption?: string) => Promise<void>;
-  sendAudio: (chatId: number, audio: Buffer, filename: string, caption?: string) => Promise<void>;
-  sendTyping: (chatId: number) => Promise<void>;
-  stop: () => void;
-}> {
+): Promise<TelegramBotApi> {
   const token = config.telegramBotToken;
   if (!token) {
     throw new Error("TELEGRAM_BOT_TOKEN is missing from config");
@@ -904,6 +913,40 @@ export async function createTelegramBot(
     }
   };
 
+  const sendWebAppButton = async (
+    chatId: number,
+    text: string,
+    buttonLabel: string,
+    webAppUrl: string,
+    replyToMessageId?: number
+  ): Promise<void> => {
+    const keyboard = new InlineKeyboard().webApp(buttonLabel, webAppUrl);
+    const messageText = formatTelegramHtml(text);
+
+    try {
+      await bot.api.sendMessage(chatId, messageText, {
+        parse_mode: "HTML",
+        reply_parameters:
+          replyToMessageId !== undefined
+            ? { message_id: replyToMessageId }
+            : undefined,
+        reply_markup: keyboard,
+      });
+    } catch (err) {
+      console.warn(
+        "Failed to send Web App button message with parse_mode, retrying as plain text:",
+        err instanceof Error ? err.message : err
+      );
+      await bot.api.sendMessage(chatId, text, {
+        reply_parameters:
+          replyToMessageId !== undefined
+            ? { message_id: replyToMessageId }
+            : undefined,
+        reply_markup: keyboard,
+      });
+    }
+  };
+
   const sendPhoto = async (
     chatId: number,
     photo: Buffer,
@@ -937,5 +980,5 @@ export async function createTelegramBot(
     bot.stop();
   };
 
-  return { reply, sendPhoto, sendAudio, sendTyping, stop };
+  return { reply, sendWebAppButton, sendPhoto, sendAudio, sendTyping, stop };
 }
