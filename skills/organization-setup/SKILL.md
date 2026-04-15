@@ -47,6 +47,13 @@ Never dump multiple questions at once. Ask one thing, wait for the answer, then 
 ### 6. Skip Is Always OK
 If they say "skip" or "that's all", stop asking and move forward with what you already have. Only four fields are truly required: displayName, handle, organizationType, description.
 
+### 7. Polygon Mapping Is Optional
+If the user wants to define a territory, land, site boundary, or area, offer a Telegram Web App button that lets them draw the area directly. Ask for just one thing: tap the button and draw the area. Do not frame copy-paste share links as the main flow.
+
+If the Web App returns polygon data, continue the conversation naturally. Do not ask the user to paste technical payloads or other raw data into chat.
+
+Point-only organization creation still remains supported.
+
 ## Conversational Flow
 
 1. **User triggers org creation intent** — they say something like "I want to register our community" or "set up our org"
@@ -64,24 +71,27 @@ If they say "skip" or "that's all", stop asking and move forward with what you a
 
 6. **Ask about missing REQUIRED fields only** — if type wasn't mentioned, ask: "Are you a nonprofit, a community group, or something else?" If description is too short, ask for a bit more.
 
-7. **Naturally weave in optional fields** — one at a time, only if not already provided:
-   - "Do you have a website or social media?"
-   - "Send me your logo 📸"
-   - "What year were you founded?"
-   - "Any goals or focus areas you'd like to highlight?"
+7. **Offer polygon capture when needed** — if they mention territory, land, site boundary, or area, show a Telegram Web App button so they can draw it. Ask for one action only: tap the button and draw the area.
 
-8. **Ask about the first member:**
-   "Should I add you as the first member? What's your name and role?"
+8. **Naturally weave in optional fields** — one at a time, only if not already provided:
+    - "Do you have a website or social media?"
+    - "Send me your logo 📸"
+    - "What year were you founded?"
+    - "Any goals or focus areas you'd like to highlight?"
 
-9. **Show the confirmation summary** before creating anything:
+9. **Ask about the first member:**
+    "Should I add you as the first member? What's your name and role?"
+
+10. **Show the confirmation summary** before creating anything:
 
    📛 Name
    🔗 handle.climateai.org
    🏷️ Type(s)
    📝 Description (truncated if long)
-   📍 Location (if provided)
-   🌐 Website (if provided)
-   📱 Social links (if provided)
+    📍 Location (if provided)
+    🗺️ Mapped area (if provided)
+    🌐 Website (if provided)
+    📱 Social links (if provided)
    📅 Founded (if provided)
    🎯 Goals (if provided)
    🖼️ Logo / banner (if provided)
@@ -89,12 +99,12 @@ If they say "skip" or "that's all", stop asking and move forward with what you a
 
    "Ready to create? 🌿"
 
-10. **On confirmation → call `create_organization`** with all collected fields.
+11. **On confirmation → call `create_organization`** with all collected fields.
 
-11. **Celebrate:**
+12. **Celebrate:**
     "Your organization is live! 🎉 🔗 handle.climateai.org"
 
-12. **Offer the next step:**
+13. **Offer the next step:**
     "Want to start recording observations under your org? 📸" or "Want to create a bumicert for your project?"
 
 ## Required vs Optional Fields
@@ -108,6 +118,7 @@ If they say "skip" or "that's all", stop asking and move forward with what you a
 **Optional (ask naturally, skip if not provided):**
 - `website`, `socialLinks`
 - `location`, `country`
+- `polygon` / mapped area when the user wants a territory, land, site boundary, or area
 - `foundedYear`
 - `goals`
 - `avatar` (logo image), `banner` (wide image)

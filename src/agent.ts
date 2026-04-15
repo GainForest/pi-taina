@@ -25,6 +25,7 @@ import { buildPolygonWebAppUrl } from "./tools/build-polygon-webapp-url.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
+import type { PolygonPoint } from "./tools/parse-polygon-webapp-payload.js";
 import { ensurePreferredLanguage, getPreferredLanguage, setPreferredLanguage } from "./user-language.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
@@ -40,6 +41,7 @@ interface SessionState {
     buttonLabel: string;
     webAppUrl: string;
   };
+  organizationPolygonPoints?: PolygonPoint[];
   currentTurnId?: number;
   currentTurnHasPhoto?: boolean;
   currentTurnHasUserContext?: boolean;
@@ -87,6 +89,21 @@ function getModelRegistry(): ModelRegistry {
     _modelRegistry = new ModelRegistry(getAuthStorage());
   }
   return _modelRegistry;
+}
+
+export function setValidatedOrganizationPolygonPoints(
+  userId: number,
+  polygonPoints: PolygonPoint[] | undefined,
+): void {
+  const state = sessions.get(userId);
+  if (!state) {
+    return;
+  }
+
+  state.organizationPolygonPoints = polygonPoints?.map((point) => ({
+    lng: point.lng,
+    lat: point.lat,
+  }));
 }
 
 function isExplicitPublishConfirmation(text: string): boolean {
@@ -234,6 +251,13 @@ const createOrganizationSchema = Type.Object({
   latitude: Type.Optional(Type.Number({ description: "GPS latitude of org location" })),
   longitude: Type.Optional(Type.Number({ description: "GPS longitude of org location" })),
   locationName: Type.Optional(Type.String({ description: "Name of the org location" })),
+  polygonPoints: Type.Optional(Type.Array(
+    Type.Object({
+      lng: Type.Number({ description: "Longitude" }),
+      lat: Type.Number({ description: "Latitude" }),
+    }),
+    { description: "Polygon points for the organization boundary" },
+  )),
   memberName: Type.Optional(Type.String({ description: "Name of the first member (person creating the org)" })),
   memberRole: Type.Optional(Type.String({ description: "Role of the first member (e.g. Director, Coordinator)" })),
   memberEmail: Type.Optional(Type.String({ description: "Email of the first member" })),
@@ -663,6 +687,10 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'No user context' }) }], details: {} };
       }
       const photos = stateRef.state.photos;
+      const polygonPoints = params.polygonPoints ?? stateRef.state.organizationPolygonPoints;
+      if (polygonPoints) {
+        stateRef.state.organizationPolygonPoints = undefined;
+      }
       const result = await createOrganization({
         handle: params.handle,
         displayName: params.displayName,
@@ -676,6 +704,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         decimalLatitude: params.latitude,
         decimalLongitude: params.longitude,
         locationName: params.locationName,
+        polygonPoints,
         memberName: params.memberName,
         memberRole: params.memberRole,
         memberEmail: params.memberEmail,

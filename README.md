@@ -213,8 +213,22 @@ Skills are documents that teach Tainá how to use each tool. They live in `skill
 | `audiomoth-chime/` | How to generate AudioMoth configuration chimes |
 | `nearby-species/` | How to search for species near a location using iNaturalist |
 | `weather/` | How to provide weather forecasts via Open-Meteo |
+| `organization-setup/` | How to create community organizations, including optional polygon territory capture via Telegram Web App |
 
 Tainá can also **build new skills on demand** — if a community member asks for something Tainá can't do yet, she can write and save a new skill in the `./skills/` directory.
+
+---
+
+## Organization Setup
+
+Organization creation is conversation-first.
+
+- If a community wants to define a territory, land, site boundary, or area, Tainá offers a Telegram Web App button so they can draw the polygon directly.
+- The bot asks for one action only: tap the button and draw the area.
+- When Telegram returns `web_app_data`, the agent continues naturally and turns the payload into the organization record.
+- Point-only organization creation still remains supported.
+
+This keeps the flow native to Telegram without asking people to paste technical payloads into chat.
 
 ---
 
