@@ -21,6 +21,7 @@ import { transcribeVoice } from "./tools/transcribe-voice.js";
 import { queryHyperindex } from "./tools/query-hyperindex.js";
 import { createHypercert } from "./tools/create-hypercert.js";
 import { createOrganization } from "./tools/create-organization.js";
+import { buildPolygonWebAppUrl } from "./tools/build-polygon-webapp-url.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
@@ -263,6 +264,18 @@ const nearbySpeciesSchema = Type.Object({
   longitude: Type.Number({ description: 'GPS longitude of the location to search around' }),
   radiusKm: Type.Optional(Type.Number({ description: 'Search radius in km (default 50, max 500)' })),
   limit: Type.Optional(Type.Number({ description: 'Max species to return (default 20, max 50)' })),
+});
+
+const requestPolygonWebAppSchema = Type.Object({
+  buttonLabel: Type.Optional(Type.String({ description: 'Optional label for the Telegram Web App button' })),
+  message: Type.Optional(Type.String({ description: 'Optional launch message to send with the Web App button' })),
+  polygonPoints: Type.Optional(Type.Array(
+    Type.Object({
+      lng: Type.Number({ description: 'Longitude' }),
+      lat: Type.Number({ description: 'Latitude' }),
+    }),
+    { description: 'Optional polygon points to preload into the Web App' },
+  )),
 });
 
 /**
@@ -798,6 +811,37 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const requestPolygonWebAppTool: ToolDefinition<typeof requestPolygonWebAppSchema> = {
+    name: 'request_polygon_webapp',
+    label: 'Request Polygon Web App',
+    description: 'Queue a Telegram Web App launch so the user can draw an organization boundary polygon. Use this during organization setup when the flow should move into the polygon capture Web App.',
+    parameters: requestPolygonWebAppSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      try {
+        const webAppUrl = buildPolygonWebAppUrl(config.polygonWebAppBaseUrl, params.polygonPoints);
+        const launchMessageText = params.message?.trim() || 'Open the polygon editor to draw the organization boundary.';
+        const buttonLabel = params.buttonLabel?.trim() || 'Open Polygon Web App';
+
+        stateRef.state.pendingPolygonWebApp = {
+          launchMessageText,
+          buttonLabel,
+          webAppUrl,
+        };
+
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: true, queued: true, buttonLabel }) }],
+          details: {},
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: message }) }],
+          details: {},
+        };
+      }
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
@@ -811,6 +855,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     generateChimeTool as unknown as ToolDefinition,
     weatherReportTool as unknown as ToolDefinition,
     nearbySpeciesTool as unknown as ToolDefinition,
+    requestPolygonWebAppTool as unknown as ToolDefinition,
   ];
 }
 

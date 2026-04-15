@@ -7,13 +7,13 @@ function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
 }
 
-function encodePolygonData(points: PolygonPoint[]): string {
+function encodePolygonData(points: readonly PolygonPoint[]): string {
   return Buffer.from(JSON.stringify(points)).toString("base64");
 }
 
 export function buildPolygonWebAppUrl(
   baseUrl: string,
-  preloadPolygon?: PolygonPoint[],
+  preloadPolygon?: readonly PolygonPoint[],
 ): string {
   const url = new URL("/draw", normalizeBaseUrl(baseUrl));
 
