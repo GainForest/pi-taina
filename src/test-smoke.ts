@@ -1,5 +1,5 @@
 // Smoke test script for Hypersphere integration
-// Run: npx tsx src/test-smoke.ts [hyperindex|org|occurrence|hypercert|all]
+// Run: npx tsx src/test-smoke.ts [hyperindex|org|occurrence|hypercert|attach|polygon|all]
 // Reads credentials from .env via dotenv
 
 import 'dotenv/config';
@@ -11,6 +11,9 @@ import { createHypercert } from './tools/create-hypercert.js';
 import { getAtprotoAgent, getCommunityDid } from './atproto.js';
 import { attachObservations } from './tools/attach-observations.js';
 import type { AtpAgent } from '@atproto/api';
+import { buildPolygonWebAppUrl, type PolygonPoint } from './tools/build-polygon-webapp-url.js';
+import { parsePolygonWebAppPayload } from './tools/parse-polygon-webapp-payload.js';
+import { createCertifiedLocation, type CertifiedLocationInput } from './tools/create-certified-location.js';
 
 // ─── Result tracking ──────────────────────────────────────────────────────────
 
@@ -21,6 +24,94 @@ interface TestResult {
 }
 
 const results: TestResult[] = [];
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function assertDeepEqual(actual: unknown, expected: unknown, message: string): void {
+  const actualJson = JSON.stringify(actual);
+  const expectedJson = JSON.stringify(expected);
+  if (actualJson !== expectedJson) {
+    throw new Error(`${message} (expected ${expectedJson}, got ${actualJson})`);
+  }
+}
+
+function decodePolygonDataParam(urlString: string): PolygonPoint[] {
+  const url = new URL(urlString);
+  const encoded = url.searchParams.get('data');
+  assert(encoded !== null, 'expected preload data query param');
+
+  const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+  const parsed = JSON.parse(decoded) as PolygonPoint[];
+  assert(Array.isArray(parsed), 'decoded preload data must be an array');
+  return parsed;
+}
+
+type CertifiedLocationSelectionInput = {
+  decimalLatitude?: number;
+  decimalLongitude?: number;
+  locationName?: string;
+  polygonPoints?: Array<{ lng: number; lat: number }>;
+};
+
+function selectCertifiedLocationInput(
+  input: CertifiedLocationSelectionInput,
+): CertifiedLocationInput | undefined {
+  if (input.polygonPoints && input.polygonPoints.length >= 3) {
+    return {
+      kind: 'polygon',
+      points: input.polygonPoints,
+      locationName: input.locationName,
+    };
+  }
+
+  if (
+    typeof input.decimalLatitude === 'number' &&
+    Number.isFinite(input.decimalLatitude) &&
+    typeof input.decimalLongitude === 'number' &&
+    Number.isFinite(input.decimalLongitude)
+  ) {
+    return {
+      kind: 'point',
+      latitude: input.decimalLatitude,
+      longitude: input.decimalLongitude,
+      locationName: input.locationName,
+    };
+  }
+
+  return undefined;
+}
+
+function createCertifiedLocationStub() {
+  const calls: Array<{ repo: string; collection: string; record: Record<string, unknown> }> = [];
+
+  const agent = {
+    com: {
+      atproto: {
+        repo: {
+          createRecord: async (args: {
+            repo: string;
+            collection: string;
+            record: Record<string, unknown>;
+          }) => {
+            calls.push(args);
+            return {
+              data: {
+                uri: `at://did:plc:smoke/${calls.length}`,
+                cid: `cid-${calls.length}`,
+              },
+            };
+          },
+        },
+      },
+    },
+  } as unknown as AtpAgent;
+
+  return { agent, calls };
+}
 
 function pass(name: string, detail: string): TestResult {
   const r: TestResult = { name, status: 'PASS', detail };
@@ -451,6 +542,143 @@ async function testAttach(): Promise<void> {
   }
 }
 
+// ─── Subcommand: polygon ──────────────────────────────────────────────────────
+
+async function testPolygonPrimitives(): Promise<void> {
+  console.log('\n── polygon ──────────────────────────────────────────────────────');
+
+  try {
+    const validPayload = JSON.stringify([
+      { lng: -84.091, lat: 9.93 },
+      { lng: -84.089, lat: 9.931 },
+      { lng: -84.088, lat: 9.928 },
+    ]);
+    const result = parsePolygonWebAppPayload(validPayload);
+
+    assert(result.ok, 'expected valid polygon payload to parse');
+    assert(result.points.length === 3, `expected 3 decoded points, got ${result.points.length}`);
+    assert(result.polygon.type === 'Polygon', `expected GeoJSON Polygon, got ${result.polygon.type}`);
+    assert(result.polygon.coordinates.length === 1, 'expected a single polygon ring');
+    assert(result.polygon.coordinates[0].length === 4, 'expected a closed ring with 4 coordinates');
+    assertDeepEqual(result.polygon.coordinates[0][0], result.polygon.coordinates[0][3], 'expected closed polygon ring');
+    results.push(pass('polygon:parser-valid', 'decoded 3 points and produced Polygon GeoJSON'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('polygon:parser-valid', msg));
+  }
+
+  try {
+    const result = parsePolygonWebAppPayload('{"points": [1, 2,');
+    assert(!result.ok, 'expected malformed payload to fail');
+    assert(result.error.code === 'invalid_json', `expected invalid_json, got ${result.error.code}`);
+    results.push(pass('polygon:parser-invalid', 'rejected malformed JSON payload'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('polygon:parser-invalid', msg));
+  }
+
+  try {
+    const defaultUrl = buildPolygonWebAppUrl('https://polygons-gainforest.vercel.app');
+    assert(defaultUrl === 'https://polygons-gainforest.vercel.app/draw', `unexpected default URL: ${defaultUrl}`);
+
+    const preloadPoints: PolygonPoint[] = [
+      { lng: -84.1, lat: 9.93 },
+      { lng: -84.09, lat: 9.931 },
+      { lng: -84.088, lat: 9.929 },
+    ];
+    const preloadUrl = buildPolygonWebAppUrl('https://polygons-gainforest.vercel.app/', preloadPoints);
+    const decodedPoints = decodePolygonDataParam(preloadUrl);
+    assertDeepEqual(decodedPoints, preloadPoints, 'preloaded polygon points should round-trip through URL encoding');
+    results.push(pass('polygon:url-builder', 'built default and preload launch URLs'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('polygon:url-builder', msg));
+  }
+
+  try {
+    const polygonSelection = selectCertifiedLocationInput({
+      decimalLatitude: 10,
+      decimalLongitude: 20,
+      polygonPoints: [
+        { lng: -84.1, lat: 9.93 },
+        { lng: -84.09, lat: 9.931 },
+        { lng: -84.088, lat: 9.929 },
+      ],
+      locationName: 'Forest edge',
+    });
+    assert(polygonSelection?.kind === 'polygon', 'polygon points should take precedence over a point location');
+
+    const pointSelection = selectCertifiedLocationInput({
+      decimalLatitude: 10,
+      decimalLongitude: 20,
+      locationName: 'River bend',
+    });
+    assert(pointSelection?.kind === 'point', 'expected point location when no polygon points are present');
+
+    const noneSelection = selectCertifiedLocationInput({ decimalLatitude: 10 });
+    assert(noneSelection === undefined, 'expected incomplete point coordinates to be ignored');
+
+    results.push(pass('polygon:location-selection', 'selected polygon over point and ignored incomplete points'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('polygon:location-selection', msg));
+  }
+
+  try {
+    const { agent, calls } = createCertifiedLocationStub();
+
+    const pointResult = await createCertifiedLocation(agent, 'did:plc:smoke-org', {
+      kind: 'point',
+      latitude: 9.93,
+      longitude: -84.09,
+      locationName: 'Point location',
+    });
+    if (!pointResult.success) {
+      throw new Error(`expected point certified location to succeed: ${pointResult.error}`);
+    }
+    if (calls.length !== 1) {
+      throw new Error(`expected one point createRecord call, got ${calls.length}`);
+    }
+
+    const pointRecord = calls[0].record;
+    assert(pointRecord.locationType === 'coordinate-decimal', `unexpected point locationType: ${String(pointRecord.locationType)}`);
+    assertDeepEqual(pointRecord.location, { string: '9.93,-84.09' }, 'unexpected point location payload');
+
+    const polygonResult = await createCertifiedLocation(agent, 'did:plc:smoke-org', {
+      kind: 'polygon',
+      points: [
+        { lng: -84.1, lat: 9.93 },
+        { lng: -84.09, lat: 9.931 },
+        { lng: -84.088, lat: 9.929 },
+      ],
+      locationName: 'Polygon location',
+    });
+    if (!polygonResult.success) {
+      throw new Error(`expected polygon certified location to succeed: ${polygonResult.error}`);
+    }
+    const totalCallsAfterPolygon = Number(calls.length);
+    if (totalCallsAfterPolygon !== 2) {
+      throw new Error(`expected two createRecord calls, got ${totalCallsAfterPolygon}`);
+    }
+
+    const polygonRecord = calls[1].record;
+    assert(polygonRecord.locationType === 'geojson', `unexpected polygon locationType: ${String(polygonRecord.locationType)}`);
+    assert(typeof polygonRecord.location === 'object' && polygonRecord.location !== null, 'expected polygon location payload');
+    const polygonLocation = polygonRecord.location as { string?: string };
+    assert(typeof polygonLocation.string === 'string', 'expected polygon location string');
+    const geojson = JSON.parse(polygonLocation.string);
+    assert(geojson.type === 'Polygon', `expected polygon GeoJSON, got ${geojson.type}`);
+    assert(Array.isArray(geojson.coordinates), 'expected GeoJSON coordinates array');
+    assert(geojson.coordinates[0].length === 4, 'expected closed polygon ring in certified location payload');
+    assertDeepEqual(geojson.coordinates[0][0], geojson.coordinates[0][3], 'expected polygon ring to close on the first point');
+
+    results.push(pass('polygon:certified-location', 'emitted point and polygon certified location payloads'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('polygon:certified-location', msg));
+  }
+}
+
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 function printSummary(): void {
@@ -490,8 +718,13 @@ async function main(): Promise<void> {
       await testAttach();
       break;
 
+    case 'polygon':
+      await testPolygonPrimitives();
+      break;
+
     case 'all':
     default:
+      await testPolygonPrimitives();
       await testHyperindex();
       await testOrg();
       await testOccurrence();
