@@ -4,6 +4,10 @@
 import { AtpAgent } from "@atproto/api";
 import crypto from "crypto";
 import type { TelegramUser } from "./publish-occurrence.js";
+import {
+  createCertifiedLocation,
+  type CertifiedLocationInput,
+} from "./create-certified-location.js";
 
 export type { TelegramUser };
 
@@ -31,6 +35,7 @@ export interface OrganizationInput {
   decimalLatitude?: number;
   decimalLongitude?: number;
   locationName?: string;
+  polygonPoints?: Array<{ lng: number; lat: number }>;
 
   // Optional - first member
   memberName?: string;
@@ -50,6 +55,7 @@ export interface OrganizationResult {
   password: string;                  // Generated password (for credential storage)
   profileUri: string;
   orgUri: string;
+  locationUri?: string;
 }
 
 export interface OrganizationError {
@@ -78,6 +84,34 @@ function generatePassword(length: number = 32): string {
 function firstSentence(text: string): string {
   const match = text.match(/^[^.!?]+[.!?]/);
   return match ? match[0].trim() : text.slice(0, 200).trim();
+}
+
+function buildCertifiedLocationInput(
+  input: OrganizationInput,
+): CertifiedLocationInput | undefined {
+  if (input.polygonPoints && input.polygonPoints.length >= 3) {
+    return {
+      kind: "polygon",
+      points: input.polygonPoints,
+      locationName: input.locationName,
+    };
+  }
+
+  if (
+    typeof input.decimalLatitude === "number" &&
+    Number.isFinite(input.decimalLatitude) &&
+    typeof input.decimalLongitude === "number" &&
+    Number.isFinite(input.decimalLongitude)
+  ) {
+    return {
+      kind: "point",
+      latitude: input.decimalLatitude,
+      longitude: input.decimalLongitude,
+      locationName: input.locationName,
+    };
+  }
+
+  return undefined;
 }
 
 /**
@@ -159,6 +193,33 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   const createdAt = new Date().toISOString();
   let profileUri = "";
   let orgUri = "";
+  let locationUri: string | undefined;
+  let locationRef: { uri: string; cid: string } | undefined;
+
+  const certifiedLocationInput = buildCertifiedLocationInput(input);
+  if (certifiedLocationInput) {
+    try {
+      const locationResult = await createCertifiedLocation(
+        agent,
+        did,
+        certifiedLocationInput,
+      );
+
+      if (locationResult.success) {
+        locationUri = locationResult.uri;
+        locationRef = { uri: locationResult.uri, cid: locationResult.cid };
+      } else {
+        console.error(
+          `Organization location creation failed (continuing without location): ${locationResult.error}`,
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `Organization location creation failed (continuing without location): ${message}`,
+      );
+    }
+  }
 
   // Step 4: Upload avatar blob if provided
   let avatarBlob: { ref: unknown; mimeType: string; size: number } | undefined;
@@ -255,6 +316,7 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     $type: "app.certified.actor.organization",
     organizationType: input.organizationType,
     createdAt,
+    ...(locationRef && { location: locationRef }),
     ...(input.foundedDate && { foundedDate: input.foundedDate }),
     ...(input.urls && input.urls.length > 0 && { urls: input.urls }),
   };
@@ -340,5 +402,6 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     password,
     profileUri,
     orgUri,
+    ...(locationUri && { locationUri }),
   };
 }
