@@ -688,9 +688,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       }
       const photos = stateRef.state.photos;
       const polygonPoints = params.polygonPoints ?? stateRef.state.organizationPolygonPoints;
-      if (polygonPoints) {
-        stateRef.state.organizationPolygonPoints = undefined;
-      }
+      const shouldConsumePolygonPoints = Array.isArray(polygonPoints) && polygonPoints.length >= 3;
       const result = await createOrganization({
         handle: params.handle,
         displayName: params.displayName,
@@ -713,6 +711,9 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         avatar: photos.length > 0 ? photos[photos.length - 1] : undefined,
         submittedBy: user,
       });
+      if (shouldConsumePolygonPoints && result.success) {
+        stateRef.state.organizationPolygonPoints = undefined;
+      }
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: {} };
     },
   };
