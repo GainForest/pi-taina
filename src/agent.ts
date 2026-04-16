@@ -25,7 +25,11 @@ import { buildPolygonWebAppUrl } from "./tools/build-polygon-webapp-url.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
-import type { PolygonPoint } from "./tools/parse-polygon-webapp-payload.js";
+import {
+  parsePolygonWebAppPayload,
+  type ParsePolygonWebAppPayloadError,
+  type PolygonPoint,
+} from "./tools/parse-polygon-webapp-payload.js";
 import { ensurePreferredLanguage, getPreferredLanguage, setPreferredLanguage } from "./user-language.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
@@ -91,6 +95,41 @@ function getModelRegistry(): ModelRegistry {
   return _modelRegistry;
 }
 
+export type TelegramPolygonWebAppDataSuccess = {
+  ok: true;
+  points: PolygonPoint[];
+};
+
+export type TelegramPolygonWebAppDataFailure = {
+  ok: false;
+  error: ParsePolygonWebAppPayloadError;
+  rawPayload: string;
+};
+
+export type TelegramPolygonWebAppDataResult =
+  | TelegramPolygonWebAppDataSuccess
+  | TelegramPolygonWebAppDataFailure;
+
+export function parseTelegramPolygonWebAppData(rawPayload: string): TelegramPolygonWebAppDataResult {
+  const parsed = parsePolygonWebAppPayload(rawPayload);
+
+  if (parsed.ok) {
+    return {
+      ok: true,
+      points: parsed.points.map((point) => ({
+        lng: point.lng,
+        lat: point.lat,
+      })),
+    };
+  }
+
+  return {
+    ok: false,
+    error: parsed.error,
+    rawPayload,
+  };
+}
+
 export function setValidatedOrganizationPolygonPoints(
   userId: number,
   polygonPoints: PolygonPoint[] | undefined,
@@ -153,6 +192,10 @@ function detectExplicitLanguagePreference(text: string): string | undefined {
   }
 
   return undefined;
+}
+
+function buildPolygonWebAppRecoveryMessage(error: ParsePolygonWebAppPayloadError): string {
+  return `I couldn't accept that polygon. ${error.message} Please open the Web App again and retry the Web App flow.`;
 }
 
 // ─── Custom tool definitions ──────────────────────────────────────────────────
@@ -985,6 +1028,20 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     });
   }
 
+  const telegramPolygonWebAppData = msg.webAppData
+    ? parseTelegramPolygonWebAppData(msg.webAppData.rawPayload)
+    : undefined;
+
+  if (telegramPolygonWebAppData?.ok) {
+    setValidatedOrganizationPolygonPoints(msg.user.id, telegramPolygonWebAppData.points);
+  }
+
+  if (telegramPolygonWebAppData && !telegramPolygonWebAppData.ok) {
+    sessionState.currentTurnHasPhoto = Boolean(msg.photo);
+    sessionState.currentTurnHasUserContext = hasMeaningfulUserContext(msg.text ?? undefined);
+    return buildPolygonWebAppRecoveryMessage(telegramPolygonWebAppData.error);
+  }
+
   let latestUserText: string | undefined;
   let promptBody: string;
 
@@ -1004,6 +1061,12 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     } else {
       console.error("Voice transcription failed:", transcription.error);
       promptBody = `[The user sent a voice note but transcription failed. Let them know you couldn't process it and ask them to type their message instead.]`;
+    }
+  } else if (msg.webAppData) {
+    if (telegramPolygonWebAppData?.ok) {
+      promptBody = `The user submitted polygon drawing data from the Telegram Web App. Validated polygon points: ${JSON.stringify(telegramPolygonWebAppData.points)}.`;
+    } else {
+      promptBody = `The user submitted polygon drawing data from the Telegram Web App, but validation failed: ${JSON.stringify(telegramPolygonWebAppData)}.`;
     }
   } else if (msg.location) {
     const { latitude, longitude } = msg.location;
