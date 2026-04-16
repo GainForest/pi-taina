@@ -225,7 +225,7 @@ Organization creation is conversation-first.
 
 - If a community wants to define a territory, land, site boundary, or area, Tainá offers a Telegram Web App button so they can draw the polygon directly.
 - The bot asks for one action only: tap the button and draw the area.
-- When Telegram returns `web_app_data`, the agent continues naturally and turns the payload into the organization record.
+- When Telegram sends the drawn boundary back, Tainá continues the setup naturally and uses it in the organization record.
 - Point-only organization creation still remains supported.
 
 This keeps the flow native to Telegram without asking people to paste technical payloads into chat.

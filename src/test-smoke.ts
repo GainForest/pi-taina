@@ -14,6 +14,14 @@ import type { AtpAgent } from '@atproto/api';
 import { buildPolygonWebAppUrl, type PolygonPoint } from './tools/build-polygon-webapp-url.js';
 import { parsePolygonWebAppPayload } from './tools/parse-polygon-webapp-payload.js';
 import { createCertifiedLocation, type CertifiedLocationInput } from './tools/create-certified-location.js';
+import {
+  clearOrganizationPolygonPoints,
+  getOrganizationPolygonPoints,
+  getOrCreateSession,
+  processTelegramPolygonWebAppData,
+  resolveOrganizationPolygonPoints,
+  resetSession,
+} from './agent.js';
 
 // ─── Result tracking ──────────────────────────────────────────────────────────
 
@@ -547,6 +555,72 @@ async function testAttach(): Promise<void> {
 async function testPolygonPrimitives(): Promise<void> {
   console.log('\n── polygon ──────────────────────────────────────────────────────');
 
+  const validSmokeUserId = 24680;
+  resetSession(validSmokeUserId);
+
+  try {
+    await getOrCreateSession(validSmokeUserId);
+
+    const validPayload = JSON.stringify([
+      { lng: -84.091, lat: 9.93 },
+      { lng: -84.089, lat: 9.931 },
+      { lng: -84.088, lat: 9.928 },
+    ]);
+    const result = processTelegramPolygonWebAppData(validSmokeUserId, validPayload);
+
+    assert(result.ok, 'expected valid Telegram web_app_data to parse');
+    assert(result.points.length === 3, `expected 3 decoded points, got ${result.points.length}`);
+    assertDeepEqual(
+      getOrganizationPolygonPoints(validSmokeUserId),
+      result.points,
+      'expected valid polygon points to be stored in session state'
+    );
+    assertDeepEqual(
+      resolveOrganizationPolygonPoints(validSmokeUserId),
+      result.points,
+      'expected later organization logic to reuse stored polygon points'
+    );
+
+    clearOrganizationPolygonPoints(validSmokeUserId);
+    assert(
+      getOrganizationPolygonPoints(validSmokeUserId) === undefined,
+      'expected consumed polygon points to be cleared after organization use'
+    );
+
+    results.push(pass('polygon:web-app-data-valid', 'validated Telegram payload and carried polygon forward'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('polygon:web-app-data-valid', msg));
+  } finally {
+    resetSession(validSmokeUserId);
+  }
+
+  const invalidSmokeUserId = validSmokeUserId + 1;
+  resetSession(invalidSmokeUserId);
+
+  try {
+    await getOrCreateSession(invalidSmokeUserId);
+
+    const result = processTelegramPolygonWebAppData(invalidSmokeUserId, '{"points": [1, 2,');
+    assert(!result.ok, 'expected malformed Telegram web_app_data to fail');
+    assert(result.error.code === 'invalid_json', `expected invalid_json, got ${result.error.code}`);
+    assert(
+      getOrganizationPolygonPoints(invalidSmokeUserId) === undefined,
+      'expected broken polygon data to stay out of session state'
+    );
+    assert(
+      resolveOrganizationPolygonPoints(invalidSmokeUserId) === undefined,
+      'expected broken polygon data to stay unavailable to organization logic'
+    );
+
+    results.push(pass('polygon:web-app-data-invalid', 'rejected malformed Telegram payload without storing polygon data'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('polygon:web-app-data-invalid', msg));
+  } finally {
+    resetSession(invalidSmokeUserId);
+  }
+
   try {
     const validPayload = JSON.stringify([
       { lng: -84.091, lat: 9.93 },
@@ -579,7 +653,7 @@ async function testPolygonPrimitives(): Promise<void> {
 
   try {
     const defaultUrl = buildPolygonWebAppUrl('https://polygons-gainforest.vercel.app');
-    assert(defaultUrl === 'https://polygons-gainforest.vercel.app/draw', `unexpected default URL: ${defaultUrl}`);
+    assert(defaultUrl === 'https://polygons-gainforest.vercel.app/telegram-draw', `unexpected default URL: ${defaultUrl}`);
 
     const preloadPoints: PolygonPoint[] = [
       { lng: -84.1, lat: 9.93 },

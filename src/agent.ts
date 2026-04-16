@@ -145,6 +145,37 @@ export function setValidatedOrganizationPolygonPoints(
   }));
 }
 
+export function processTelegramPolygonWebAppData(
+  userId: number,
+  rawPayload: string,
+): TelegramPolygonWebAppDataResult {
+  const parsed = parseTelegramPolygonWebAppData(rawPayload);
+
+  if (parsed.ok) {
+    setValidatedOrganizationPolygonPoints(userId, parsed.points);
+  }
+
+  return parsed;
+}
+
+export function getOrganizationPolygonPoints(userId: number): PolygonPoint[] | undefined {
+  return sessions.get(userId)?.organizationPolygonPoints;
+}
+
+export function resolveOrganizationPolygonPoints(
+  userId: number,
+  explicitPolygonPoints?: PolygonPoint[],
+): PolygonPoint[] | undefined {
+  return explicitPolygonPoints ?? getOrganizationPolygonPoints(userId);
+}
+
+export function clearOrganizationPolygonPoints(userId: number): void {
+  const state = sessions.get(userId);
+  if (state) {
+    state.organizationPolygonPoints = undefined;
+  }
+}
+
 function isExplicitPublishConfirmation(text: string): boolean {
   const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) {
@@ -730,7 +761,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'No user context' }) }], details: {} };
       }
       const photos = stateRef.state.photos;
-      const polygonPoints = params.polygonPoints ?? stateRef.state.organizationPolygonPoints;
+      const polygonPoints = resolveOrganizationPolygonPoints(user.id, params.polygonPoints);
       const shouldConsumePolygonPoints = Array.isArray(polygonPoints) && polygonPoints.length >= 3;
       const result = await createOrganization({
         handle: params.handle,
@@ -755,7 +786,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         submittedBy: user,
       });
       if (shouldConsumePolygonPoints && result.success) {
-        stateRef.state.organizationPolygonPoints = undefined;
+        clearOrganizationPolygonPoints(user.id);
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: {} };
     },
@@ -1029,12 +1060,8 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   }
 
   const telegramPolygonWebAppData = msg.webAppData
-    ? parseTelegramPolygonWebAppData(msg.webAppData.rawPayload)
+    ? processTelegramPolygonWebAppData(msg.user.id, msg.webAppData.rawPayload)
     : undefined;
-
-  if (telegramPolygonWebAppData?.ok) {
-    setValidatedOrganizationPolygonPoints(msg.user.id, telegramPolygonWebAppData.points);
-  }
 
   if (telegramPolygonWebAppData && !telegramPolygonWebAppData.ok) {
     sessionState.currentTurnHasPhoto = Boolean(msg.photo);
