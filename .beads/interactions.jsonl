@@ -116,3 +116,4 @@
 {"id":"int-c6f50b36","kind":"field_change","created_at":"2026-04-15T23:56:05.958324Z","actor":"diegorb.climateai.org","issue_id":"pi-taina-1-t34.7","extra":{"field":"assignee","new_value":"diegorb.climateai.org","old_value":""}}
 {"id":"int-e069b3e8","kind":"field_change","created_at":"2026-04-16T03:41:27.833824Z","actor":"diegorb.climateai.org","issue_id":"pi-taina-1-wcl.2","extra":{"field":"assignee","new_value":"diegorb.climateai.org","old_value":""}}
 {"id":"int-01eb3f26","kind":"field_change","created_at":"2026-04-16T03:48:27.155649Z","actor":"diegorb.climateai.org","issue_id":"pi-taina-1-jy7","extra":{"field":"assignee","new_value":"diegorb.climateai.org","old_value":""}}
+{"id":"int-8b34a805","kind":"field_change","created_at":"2026-04-16T03:49:05.364781Z","actor":"diegorb.climateai.org","issue_id":"pi-taina-1-jy7","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"bf86d0f temp debug polygon web app url"}}
