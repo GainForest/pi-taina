@@ -213,7 +213,7 @@ Skills are documents that teach Tainá how to use each tool. They live in `skill
 | `audiomoth-chime/` | How to generate AudioMoth configuration chimes |
 | `nearby-species/` | How to search for species near a location using iNaturalist |
 | `weather/` | How to provide weather forecasts via Open-Meteo |
-| `organization-setup/` | How to create community organizations, including optional polygon territory capture via Telegram Web App |
+| `organization-setup/` | How to create community organizations, including Telegram Web App polygon capture and a pasted fallback if the automatic handoff doesn't arrive |
 
 Tainá can also **build new skills on demand** — if a community member asks for something Tainá can't do yet, she can write and save a new skill in the `./skills/` directory.
 
@@ -223,9 +223,10 @@ Tainá can also **build new skills on demand** — if a community member asks fo
 
 Organization creation is conversation-first.
 
-- If a community wants to define a territory, land, site boundary, or area, Tainá offers a Telegram Web App button so they can draw the polygon directly.
+- If a community wants to define a territory, land, site boundary, or area, Tainá offers a Telegram Web App button first so they can draw the polygon directly.
 - The bot asks for one action only: tap the button and draw the area.
-- When Telegram sends the drawn boundary back, Tainá continues the setup naturally and uses it in the organization record.
+- When Telegram sends the drawn boundary back automatically, Tainá continues the setup naturally and uses it in the organization record.
+- If the automatic handoff doesn't arrive and someone pastes the fallback boundary data from the Web App into chat, Tainá accepts it, confirms the boundary was recovered, and keeps going without asking them to redraw unless the data is invalid.
 - Point-only organization creation still remains supported.
 
 This keeps the flow native to Telegram without asking people to paste technical payloads into chat.

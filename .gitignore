@@ -50,3 +50,9 @@ Thumbs.db
 .dolt/
 *.db
 .beads-credential-key
+
+# Bundled platform binaries (large, not tracked in git)
+lib/audiogoat-*
+
+# Applied patch files
+*.patch

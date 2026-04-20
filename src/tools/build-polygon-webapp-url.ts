@@ -15,7 +15,7 @@ export function buildPolygonWebAppUrl(
   baseUrl: string,
   preloadPolygon?: readonly PolygonPoint[],
 ): string {
-  const url = new URL("/draw", normalizeBaseUrl(baseUrl));
+  const url = new URL("/telegram-draw", normalizeBaseUrl(baseUrl));
 
   if (preloadPolygon !== undefined) {
     url.searchParams.set("data", encodePolygonData(preloadPolygon));

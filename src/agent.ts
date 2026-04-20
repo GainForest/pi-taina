@@ -14,6 +14,7 @@ import { loadEnvConfig, type EnvConfig } from "./env.js";
 import type { IncomingMessage } from "./telegram.js";
 import { identifySpecies } from "./tools/identify-species.js";
 import { publishOccurrence, type TelegramUser } from "./tools/publish-occurrence.js";
+import { publishMeasurement } from "./tools/publish-measurement.js";
 import { geocodeLocation } from "./tools/geocode-location.js";
 import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts, reverseGeocodeAdmin } from "./tools/gfw-api.js";
 import { generateTreeCoverLossChart, buildGfwMapUrl } from "./tools/gfw-chart.js";
@@ -25,8 +26,11 @@ import { buildPolygonWebAppUrl } from "./tools/build-polygon-webapp-url.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
+import { detectAudioMothSDCards } from './tools/detect-audiomoth-sd.js';
+import { uploadAudioMothSD } from './tools/ingest-audiomoth-sd.js';
 import {
   parsePolygonWebAppPayload,
+  isLikelyPolygonPayloadText,
   type ParsePolygonWebAppPayloadError,
   type PolygonPoint,
 } from "./tools/parse-polygon-webapp-payload.js";
@@ -52,6 +56,12 @@ interface SessionState {
   latestIdentificationTurnId?: number;
   latestIdentificationAgreementTurnId?: number;
   latestPublishConfirmationTurnId?: number;
+  latestPublishedOccurrence?: {
+    uri: string;
+    occurrenceID: string;
+    scientificName: string;
+    kingdom?: string;
+  };
 }
 
 // ─── Module-level singletons ──────────────────────────────────────────────────
@@ -226,7 +236,7 @@ function detectExplicitLanguagePreference(text: string): string | undefined {
 }
 
 function buildPolygonWebAppRecoveryMessage(error: ParsePolygonWebAppPayloadError): string {
-  return `I couldn't accept that polygon. ${error.message} Please open the Web App again and retry the Web App flow.`;
+  return `I couldn't recover that boundary yet. ${error.message} If the Web App didn't hand it back automatically, paste the fallback boundary data into chat and I'll try again.`;
 }
 
 // ─── Custom tool definitions ──────────────────────────────────────────────────
@@ -265,6 +275,76 @@ const publishOccurrenceSchema = Type.Object({
   // Extended location
   stateProvince: Type.Optional(Type.String({ description: 'State or province name' })),
   municipality: Type.Optional(Type.String({ description: 'Municipality name' })),
+});
+
+const measurementEntrySchema = Type.Object({
+  measurementType: Type.String({ description: "The nature of the measurement (e.g. 'soil pH', 'canopy cover')" }),
+  measurementValue: Type.String({ description: "The value (e.g. '6.5', 'present')" }),
+  measurementUnit: Type.Optional(Type.String({ description: "Unit (e.g. 'cm', 'm', 'kg', '%')" })),
+  measurementMethod: Type.Optional(Type.String({ description: "Method or instrument used" })),
+  measurementRemarks: Type.Optional(Type.String({ description: "Notes about this measurement" })),
+});
+
+const publishMeasurementSchema = Type.Object({
+  measurementType: Type.Union([
+    Type.Literal('flora'),
+    Type.Literal('fauna'),
+    Type.Literal('generic'),
+  ], { description: "Organism type: 'flora' for plants/trees/corals, 'fauna' for animals, 'generic' for flexible key-value measurements" }),
+
+  // ── Flora fields (use when measurementType='flora') ──────────────────────
+  dbh: Type.Optional(Type.String({ description: "[flora] Diameter at breast height in centimeters" })),
+  girth: Type.Optional(Type.String({ description: "[flora] Trunk circumference at breast height in centimeters" })),
+  basalDiameter: Type.Optional(Type.String({ description: "[flora] Diameter at ground level in centimeters (shrubs)" })),
+  stemCount: Type.Optional(Type.Number({ description: "[flora] Number of stems for multi-stemmed individuals" })),
+  totalHeight: Type.Optional(Type.String({ description: "[flora] Total height in meters" })),
+  heightToFirstBranch: Type.Optional(Type.String({ description: "[flora] Height to first major branch (bole length) in meters" })),
+  crownDiameter: Type.Optional(Type.String({ description: "[flora] Average crown diameter in meters" })),
+  crownPosition: Type.Optional(Type.String({ description: "[flora] Canopy position: dominant, codominant, intermediate, suppressed, emergent" })),
+  abovegroundBiomass: Type.Optional(Type.String({ description: "[flora] Aboveground biomass in kilograms (from allometric equations)" })),
+  carbonContent: Type.Optional(Type.String({ description: "[flora] Carbon stored in kilograms of carbon" })),
+  woodDensity: Type.Optional(Type.String({ description: "[flora] Specific gravity in g/cm³" })),
+  biomassAllometricEquation: Type.Optional(Type.String({ description: "[flora] Allometric equation used (e.g. 'Chave et al. 2014')" })),
+  vitalityStatus: Type.Optional(Type.String({ description: "[flora] alive, dead-standing, dead-fallen, moribund, missing, unknown" })),
+  growthForm: Type.Optional(Type.String({ description: "[flora] tree, shrub, liana, palm, tree-fern, herb, grass, bamboo, epiphyte, other" })),
+  floweringStatus: Type.Optional(Type.String({ description: "[flora] none, budding, flowering, fruiting, senescing" })),
+  phenology: Type.Optional(Type.String({ description: "[flora] leafless, flush, full-leaf, senescing, dormant" })),
+  damageType: Type.Optional(Type.String({ description: "[flora] Type of damage observed (e.g. 'broken crown', 'uprooted')" })),
+  damageCause: Type.Optional(Type.String({ description: "[flora] wind, lightning, fire, drought, flood, animal, human, disease, pest, unknown" })),
+
+  // ── Fauna fields (use when measurementType='fauna') ───────────────────────
+  bodyMass: Type.Optional(Type.String({ description: "[fauna] Body mass in grams" })),
+  totalLength: Type.Optional(Type.String({ description: "[fauna] Total body length tip-to-tail in millimeters" })),
+  headBodyLength: Type.Optional(Type.String({ description: "[fauna] Head-body length excluding tail in millimeters" })),
+  tailLength: Type.Optional(Type.String({ description: "[fauna] Tail length in millimeters" })),
+  wingLength: Type.Optional(Type.String({ description: "[fauna/birds] Flattened wing chord in millimeters" })),
+  wingspan: Type.Optional(Type.String({ description: "[fauna/birds,bats] Full wingspan tip-to-tip in millimeters" })),
+  billLength: Type.Optional(Type.String({ description: "[fauna/birds] Culmen length in millimeters" })),
+  tarsusLength: Type.Optional(Type.String({ description: "[fauna/birds] Tarsometatarsus length in millimeters" })),
+  fatScore: Type.Optional(Type.String({ description: "[fauna/birds] Subcutaneous fat score 0-8" })),
+  forearmLength: Type.Optional(Type.String({ description: "[fauna/bats] Forearm length in millimeters" })),
+  snoutVentLength: Type.Optional(Type.String({ description: "[fauna/reptiles,amphibians] Snout-vent length in millimeters" })),
+  carapaceLength: Type.Optional(Type.String({ description: "[fauna/turtles] Straight carapace length in millimeters" })),
+  groupSize: Type.Optional(Type.Number({ description: "[fauna] Total size of social group observed" })),
+  clutchSize: Type.Optional(Type.Number({ description: "[fauna/birds,reptiles] Number of eggs in nest" })),
+  litterSize: Type.Optional(Type.Number({ description: "[fauna/mammals] Number of offspring in litter" })),
+  bodyConditionScore: Type.Optional(Type.String({ description: "[fauna] Body condition score (scale varies by taxon)" })),
+  injuryPresent: Type.Optional(Type.Boolean({ description: "[fauna] Whether visible injuries exist" })),
+  injuryDescription: Type.Optional(Type.String({ description: "[fauna] Description of injuries" })),
+  tagId: Type.Optional(Type.String({ description: "[fauna] Ear/flipper/wing tag identifier" })),
+  tagType: Type.Optional(Type.String({ description: "[fauna] ear-tag, flipper-tag, wing-tag, leg-band, gps-collar, pit-tag, other" })),
+  bandNumber: Type.Optional(Type.String({ description: "[fauna/birds] Metal or color band/ring number" })),
+  recaptureStatus: Type.Optional(Type.String({ description: "[fauna] new, recapture, unknown" })),
+
+  // ── Generic measurements (use when measurementType='generic') ─────────────
+  genericMeasurements: Type.Optional(Type.Array(measurementEntrySchema, {
+    description: "[generic] Array of key-value measurement entries. Required when measurementType='generic'.",
+  })),
+
+  // ── Common optional metadata ───────────────────────────────────────────────
+  measurementMethod: Type.Optional(Type.String({ description: "General protocol used (e.g. 'ForestGEO standard protocol')" })),
+  measurementDate: Type.Optional(Type.String({ description: "Date measurements were taken (ISO 8601)" })),
+  measurementRemarks: Type.Optional(Type.String({ description: "Notes about the measurement session" })),
 });
 
 const geocodeLocationSchema = Type.Object({
@@ -362,6 +442,13 @@ const nearbySpeciesSchema = Type.Object({
   longitude: Type.Number({ description: 'GPS longitude of the location to search around' }),
   radiusKm: Type.Optional(Type.Number({ description: 'Search radius in km (default 50, max 500)' })),
   limit: Type.Optional(Type.Number({ description: 'Max species to return (default 20, max 50)' })),
+});
+
+const detectAudioMothSDSchema = Type.Object({});
+
+const uploadAudioMothSDSchema = Type.Object({
+  folder: Type.String({ description: "Absolute path to the SD card folder to ingest (from detect_audiomoth_sd result)" }),
+  deploymentUri: Type.Optional(Type.String({ description: "AT-URI of the deployment to associate recordings with. Only provide when the user has explicitly chosen from a list returned by a previous call." })),
 });
 
 const requestPolygonWebAppSchema = Type.Object({
@@ -550,13 +637,142 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         submittedBy: user,
       });
 
-      // Clear photos after a successful publish
+      // Clear photos and store occurrence ref after a successful publish
       if (result.success) {
         stateRef.state.photos = [];
+        stateRef.state.latestPublishedOccurrence = {
+          uri: result.uri,
+          occurrenceID: result.occurrenceID,
+          scientificName: result.scientificName,
+          kingdom: params.kingdom,
+        };
       }
 
       return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            ...result,
+            ...(result.success ? {
+              suggestMeasurements: true,
+              measurementHint: "Ask the user if they want to add field measurements for this organism (e.g. height, trunk diameter, biomass for plants; body mass, wing length, health score for animals). Call publish_measurement if they say yes.",
+            } : {}),
+          }),
+        }],
+        details: {},
+      };
+    },
+  };
+
+  const publishMeasurementTool: ToolDefinition<typeof publishMeasurementSchema> = {
+    name: "publish_measurement",
+    label: "Publish Measurement",
+    description:
+      "Publish field measurements for the most recently recorded occurrence in this session (app.gainforest.dwc.measurement). " +
+      "Call after publish_occurrence when the user wants to add quantitative data: morphometrics, biomass, health scores, individual marks, etc. " +
+      "Use measurementType='flora' for plants/trees/corals, 'fauna' for animals, 'generic' for anything else. " +
+      "Only pass the fields that are actually known — omit the rest.",
+    parameters: publishMeasurementSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const user = stateRef.state.currentUser;
+      const lastOccurrence = stateRef.state.latestPublishedOccurrence;
+
+      if (!user) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No user context available" }) }],
+          details: {},
+        };
+      }
+
+      if (!lastOccurrence) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              error: "No occurrence published yet in this session",
+              code: "occurrence_required",
+              suggestion: "Publish an occurrence first with publish_occurrence, then call publish_measurement.",
+            }),
+          }],
+          details: {},
+        };
+      }
+
+      // Build the typed result object from flat schema params
+      let result: Parameters<typeof publishMeasurement>[0]['result'];
+
+      if (params.measurementType === 'flora') {
+        result = {
+          type: 'flora',
+          data: {
+            dbh: params.dbh,
+            girth: params.girth,
+            basalDiameter: params.basalDiameter,
+            stemCount: params.stemCount,
+            totalHeight: params.totalHeight,
+            heightToFirstBranch: params.heightToFirstBranch,
+            crownDiameter: params.crownDiameter,
+            crownPosition: params.crownPosition,
+            abovegroundBiomass: params.abovegroundBiomass,
+            carbonContent: params.carbonContent,
+            woodDensity: params.woodDensity,
+            biomassAllometricEquation: params.biomassAllometricEquation,
+            vitalityStatus: params.vitalityStatus,
+            growthForm: params.growthForm,
+            floweringStatus: params.floweringStatus,
+            phenology: params.phenology,
+            damageType: params.damageType,
+            damageCause: params.damageCause,
+          },
+        };
+      } else if (params.measurementType === 'fauna') {
+        result = {
+          type: 'fauna',
+          data: {
+            bodyMass: params.bodyMass,
+            totalLength: params.totalLength,
+            headBodyLength: params.headBodyLength,
+            tailLength: params.tailLength,
+            wingLength: params.wingLength,
+            wingspan: params.wingspan,
+            billLength: params.billLength,
+            tarsusLength: params.tarsusLength,
+            fatScore: params.fatScore,
+            forearmLength: params.forearmLength,
+            snoutVentLength: params.snoutVentLength,
+            carapaceLength: params.carapaceLength,
+            groupSize: params.groupSize,
+            clutchSize: params.clutchSize,
+            litterSize: params.litterSize,
+            bodyConditionScore: params.bodyConditionScore,
+            injuryPresent: params.injuryPresent,
+            injuryDescription: params.injuryDescription,
+            tagId: params.tagId,
+            tagType: params.tagType,
+            bandNumber: params.bandNumber,
+            recaptureStatus: params.recaptureStatus,
+          },
+        };
+      } else {
+        result = {
+          type: 'generic',
+          measurements: params.genericMeasurements ?? [],
+        };
+      }
+
+      const response = await publishMeasurement({
+        occurrenceRef: lastOccurrence.uri,
+        occurrenceID: lastOccurrence.occurrenceID,
+        result,
+        measurementDate: params.measurementDate,
+        measurementMethod: params.measurementMethod,
+        measurementRemarks: params.measurementRemarks,
+        submittedBy: user,
+      });
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(response) }],
         details: {},
       };
     },
@@ -946,9 +1162,38 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const detectAudioMothSDTool: ToolDefinition<typeof detectAudioMothSDSchema> = {
+    name: "detect_audiomoth_sd",
+    label: "Detect AudioMoth SD Cards",
+    description: "Scan the machine for connected AudioMoth SD cards containing bioacoustic recordings. Returns a list of detected cards with file counts. Use when the user asks about SD cards, AudioMoth recorders, or wants to upload recordings.",
+    parameters: detectAudioMothSDSchema,
+    execute: async (_toolCallId, _params, _signal, _onUpdate, _ctx) => {
+      const result = await detectAudioMothSDCards();
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
+  const uploadAudioMothSDTool: ToolDefinition<typeof uploadAudioMothSDSchema> = {
+    name: "upload_audiomoth_sd",
+    label: "Upload AudioMoth SD Card",
+    description: "Upload AudioMoth WAV recordings from a connected SD card to the community ATProto PDS. Converts to FLAC, deduplicates via SHA-1, and links to a recorder deployment. Only call after the user confirms they want to upload.",
+    parameters: uploadAudioMothSDSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const result = await uploadAudioMothSD(params.folder, params.deploymentUri);
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
+    publishMeasurementTool as unknown as ToolDefinition,
     geocodeLocationTool as unknown as ToolDefinition,
     clearPhotosTool as unknown as ToolDefinition,
     forestReportTool as unknown as ToolDefinition,
@@ -960,6 +1205,8 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     weatherReportTool as unknown as ToolDefinition,
     nearbySpeciesTool as unknown as ToolDefinition,
     requestPolygonWebAppTool as unknown as ToolDefinition,
+    detectAudioMothSDTool as unknown as ToolDefinition,
+    uploadAudioMothSDTool as unknown as ToolDefinition,
   ];
 }
 
@@ -1063,10 +1310,20 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     ? processTelegramPolygonWebAppData(msg.user.id, msg.webAppData.rawPayload)
     : undefined;
 
-  if (telegramPolygonWebAppData && !telegramPolygonWebAppData.ok) {
+  const pastedPolygonWebAppData = !msg.webAppData && msg.text && isLikelyPolygonPayloadText(msg.text)
+    ? processTelegramPolygonWebAppData(msg.user.id, msg.text)
+    : undefined;
+
+  const failedPolygonWebAppData = telegramPolygonWebAppData && !telegramPolygonWebAppData.ok
+    ? telegramPolygonWebAppData
+    : pastedPolygonWebAppData && !pastedPolygonWebAppData.ok
+      ? pastedPolygonWebAppData
+      : undefined;
+
+  if (failedPolygonWebAppData) {
     sessionState.currentTurnHasPhoto = Boolean(msg.photo);
     sessionState.currentTurnHasUserContext = hasMeaningfulUserContext(msg.text ?? undefined);
-    return buildPolygonWebAppRecoveryMessage(telegramPolygonWebAppData.error);
+    return buildPolygonWebAppRecoveryMessage(failedPolygonWebAppData.error);
   }
 
   let latestUserText: string | undefined;
@@ -1089,11 +1346,16 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
       console.error("Voice transcription failed:", transcription.error);
       promptBody = `[The user sent a voice note but transcription failed. Let them know you couldn't process it and ask them to type their message instead.]`;
     }
-  } else if (msg.webAppData) {
-    if (telegramPolygonWebAppData?.ok) {
-      promptBody = `The user submitted polygon drawing data from the Telegram Web App. Validated polygon points: ${JSON.stringify(telegramPolygonWebAppData.points)}.`;
+  } else if (msg.webAppData || pastedPolygonWebAppData) {
+    const polygonData = telegramPolygonWebAppData ?? pastedPolygonWebAppData!;
+    if (polygonData.ok) {
+      promptBody = msg.webAppData
+        ? `The user submitted polygon drawing data from the Telegram Web App. The boundary was recovered. Validated polygon points: ${JSON.stringify(polygonData.points)}.`
+        : `The user pasted fallback polygon drawing data into chat. The boundary was recovered. Validated polygon points: ${JSON.stringify(polygonData.points)}.`;
     } else {
-      promptBody = `The user submitted polygon drawing data from the Telegram Web App, but validation failed: ${JSON.stringify(telegramPolygonWebAppData)}.`;
+      promptBody = msg.webAppData
+        ? `The user submitted polygon drawing data from the Telegram Web App, but validation failed: ${JSON.stringify(polygonData)}.`
+        : `The user pasted fallback polygon drawing data into chat, but validation failed: ${JSON.stringify(polygonData)}.`;
     }
   } else if (msg.location) {
     const { latitude, longitude } = msg.location;
