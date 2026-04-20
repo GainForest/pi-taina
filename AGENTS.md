@@ -65,7 +65,15 @@ When the user wants to create an organization:
 6. **Weave in optional fields naturally** — website, social media, logo, founded year, goals
 7. **Show confirmation summary** — always show everything collected before creating, including any mapped area
 8. **Create on confirmation** — call create_organization with all collected fields
-9. **Celebrate and offer next steps** — "Want to start recording observations?"
+9. **After creation — present the result using ONLY what the tool returned:**
+   - Handle: `name.climateai.org`
+   - Password: show it in `<code>` so the user can copy it — this is the real ATProto account password
+   - Hyperscan link: `https://www.hyperscan.dev/data?did=<DID from result>`
+   - If admin: offer to save the password to `.env`
+   - Do NOT invent any email address — ATProto does not use email, none is created
+   - Do NOT say "we generated an institutional email" or anything like that
+10. **Explain publishing honestly** — Tainá currently publishes observations under the community account, not the org account. The org is a network identity: it has a profile, can hold bumicerts, and shows up on hyperscan. Switching the publishing account requires reconfiguring the bot.
+11. **Celebrate and offer next steps** — bumicert, observations, etc.
 
 Never ask numbered questions. Never re-ask for info already provided. Voice notes can fill 5+ fields at once.
 

@@ -107,11 +107,33 @@ Point-only organization creation still remains supported.
 
 11. **On confirmation → call `create_organization`** with all collected fields.
 
-12. **Celebrate:**
-    "Your organization is live! 🎉 🔗 handle.climateai.org"
+12. **Read the result carefully.** The tool returns:
+    ```
+    {
+      success: true,
+      did: "did:plc:...",          ← the org's decentralized identifier
+      handle: "name.climateai.org", ← full handle
+      password: "...",              ← the org's ATProto account password (32 chars, random)
+      profileUri: "at://...",
+      orgUri: "at://...",
+      locationUri: "at://..."       ← only if a polygon/location was provided
+    }
+    ```
 
-13. **Offer the next step:**
-    "Want to start recording observations under your org? 📸" or "Want to create a bumicert for your project?"
+13. **Present the result to the user** using ONLY the fields the tool returned:
+
+    Example message:
+    "🎉 ¡Tu organización está activa!
+    🔗 handle.climateai.org
+    🔑 Contraseña: <code>PASSWORD_HERE</code>
+    🌐 Ver perfil: https://www.hyperscan.dev/data?did=DID_HERE"
+
+    - Show the handle and password clearly — the password is the credential to log into the org's ATProto account
+    - If user is admin, offer: "¿Quieres que la guarde en el archivo de configuración?" and if they say yes, use Bash to append `ORG_PASSWORD="..."` to `.env`
+    - Link to hyperscan so they can see the live profile
+
+14. **Offer the next step:**
+    "Want to create a bumicert for your project? Or start recording observations? 🌿"
 
 ## Required vs Optional Fields
 
@@ -122,13 +144,20 @@ Point-only organization creation still remains supported.
 - `description` — what the org does (a sentence or two is enough)
 
 **Optional (ask naturally, skip if not provided):**
-- `website`, `socialLinks`
+- `website`, `socialLinks` (twitter, instagram, facebook, linkedin, youtube, tiktok, github, discord, telegram, other)
 - `location`, `country`
 - `polygon` / mapped area when the user wants a territory, land, site boundary, or area
 - `foundedYear`
-- `goals`
+- `objectives` — valid values (capitalize exactly): **Conservation**, **Research**, **Education**, **Community**, **Other**
+- `ecosystemTypes` — valid values: tropical-rainforest, mangrove, coral-reef, wetland, savanna, grassland, boreal-forest, temperate-forest, alpine, marine, freshwater, urban, agroforestry, other
+- `focusSpeciesGroups` — valid values: birds, mammals, reptiles, amphibians, fish, insects, trees, shrubs, fungi, coral, other
 - `avatar` (logo image), `banner` (wide image)
 - `members` (name + role)
+
+**How to ask about ecosystems and species naturally:**
+- "What kinds of ecosystems do you work in — mangroves, rainforest, coral reefs?"
+- "Do you focus on any particular group of species — birds, mammals, trees, insects?"
+- These can often be inferred from the description without asking — if they say "we protect the mangroves", set ecosystemTypes=["mangrove"] automatically.
 
 User can say "skip" or "that's all" at any point — only the 4 required fields are truly needed.
 
@@ -163,12 +192,24 @@ Always show this before calling `create_organization`. Only include lines where 
 Ready to create? 🌿
 ```
 
+## What the Organization Actually Is
+
+The `create_organization` tool creates a **real ATProto account** on `climateai.org`. This means:
+
+- The org gets its own DID (decentralized identifier) — a permanent, verifiable identity
+- Five records are published: profile, organization, info, location (if polygon), member (if provided)
+- The org has its own **password** — this is a real credential, not a display value. Share it with the user
+- The org's profile is live and visible at `https://www.hyperscan.dev/data?did=<DID>`
+
+**Tainá still publishes observations under the community account**, not the org account. The org is a network identity — it can hold bumicerts and observations linked to it, but switching Tainá's publishing account requires reconfiguring the bot separately.
+
 ## Don't
+
 - Don't ask numbered questions or follow a rigid script — this is a conversation
 - Don't ask for info already provided, even if it was mentioned in passing or in a voice note
 - Don't ask more than one question at a time
 - Don't require optional fields — only 4 fields are truly required
-- Don't expose any password or secret token in Telegram messages
+- Don't invent an email address like `handle@climateai.org` — ATProto doesn't use email for identity, no email is created
 - Don't create the organization without showing the confirmation summary first
 - Don't say "Question 3:" or "Step 2:" — there are no steps, only conversation
 - Don't ask "What is your organization type?" if they already said "we're a nonprofit"
@@ -176,3 +217,5 @@ Ready to create? 🌿
 - Don't forget to celebrate their work — these are real communities doing real conservation
 - Don't overwhelm with technical details about ATProto, DIDs, PDS, or Telegram internals
 - Don't ask for a handle if you can suggest one — suggest it and let them confirm or change it
+- Don't tell the user their existing observations "can't be migrated" — that's a technical limitation of the current setup, not a permanent rule. Just explain that Tainá currently publishes under the community account
+- Don't hide the password — it IS the org's login credential. Show it clearly in a code block so the user can copy it

@@ -46,7 +46,19 @@ async function main() {
 
   // 3. Start Telegram bot
   console.log("🤖 Starting Tainá Telegram bot...");
+
+  // Dedup: prevent double-processing the same Telegram message_id (e.g. two
+  // instances running simultaneously, or Telegram retrying a slow update).
+  const recentMessageIds = new Set<number>();
+
   const bot: TelegramBotApi = await createTelegramBot(async (msg) => {
+    if (recentMessageIds.has(msg.messageId)) {
+      console.warn(`[dedup] Skipping already-processed message_id ${msg.messageId}`);
+      return;
+    }
+    recentMessageIds.add(msg.messageId);
+    setTimeout(() => recentMessageIds.delete(msg.messageId), 60_000);
+
     try {
       // Show typing indicator while processing
       await bot.sendTyping(msg.chatId);

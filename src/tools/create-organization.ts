@@ -27,9 +27,12 @@ export interface OrganizationInput {
 
   // Optional - org details
   foundedDate?: string;              // ISO 8601 date
-  country?: string;
+  country?: string;                  // ISO 3166-1 alpha-2
   urls?: Array<{ url: string; label?: string }>;
-  objectives?: string[];
+  objectives?: string[];             // Conservation | Research | Education | Community | Other
+  ecosystemTypes?: string[];         // tropical-rainforest | mangrove | coral-reef | wetland | etc.
+  focusSpeciesGroups?: string[];     // birds | mammals | trees | fish | insects | etc.
+  socialLinks?: Array<{ platform: string; url: string }>; // twitter | instagram | facebook | etc.
 
   // Optional - location
   decimalLatitude?: number;
@@ -342,12 +345,15 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     displayName: input.displayName,
     shortDescription,
     longDescription: input.description,
-    visibility: "public",
+    visibility: "Public",           // enum: "Public" | "Unlisted"
     createdAt,
     ...(input.country && { country: input.country }),
     ...(input.objectives && input.objectives.length > 0 && { objectives: input.objectives }),
+    ...(input.ecosystemTypes && input.ecosystemTypes.length > 0 && { ecosystemTypes: input.ecosystemTypes }),
+    ...(input.focusSpeciesGroups && input.focusSpeciesGroups.length > 0 && { focusSpeciesGroups: input.focusSpeciesGroups }),
     ...(input.website && { website: input.website }),
     ...(input.foundedDate && { startDate: input.foundedDate }),
+    ...(input.socialLinks && input.socialLinks.length > 0 && { socialLinks: input.socialLinks }),
   };
 
   try {
