@@ -73,14 +73,7 @@ async function main() {
             msg.isGroup ? msg.messageId : undefined,
           );
 
-          // TEMP DEBUG: expose the exact resolved Web App URL in chat for verification.
-          await bot.reply(
-            msg.chatId,
-            `🧪 TEMP DEBUG — resolved Web App URL:\n${pendingPolygonWebApp.webAppUrl}`,
-            {
-              replyToMessageId: msg.isGroup ? msg.messageId : undefined,
-            },
-          );
+
         }
 
         // Send pending chart photo if available (best-effort)
