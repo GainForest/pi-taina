@@ -261,7 +261,7 @@ const publishOccurrenceSchema = Type.Object({
   habitat: Type.Optional(Type.String({ description: "Habitat description" })),
   behavior: Type.Optional(Type.String({ description: "Observed behavior" })),
   individualCount: Type.Optional(Type.Number({ description: "Number of individuals observed" })),
-  occurrenceRemarks: Type.Optional(Type.String({ description: "Additional remarks about the occurrence" })),
+  occurrenceRemarks: Type.Optional(Type.String({ description: "Local knowledge, stories, traditional names, cultural significance, or any other notes the community wants to attach to this observation" })),
   eventDate: Type.Optional(Type.String({ description: "Date of observation in ISO 8601 format" })),
   // Taxonomy (all optional strings)
   kingdom: Type.Optional(Type.String({ description: 'Taxonomic kingdom (e.g. Animalia, Plantae, Fungi)' })),

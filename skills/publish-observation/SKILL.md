@@ -17,6 +17,10 @@ When the user wants to publish/record/save a species observation to the communit
 
 4. **Publish only after explicit later confirmation** — Do not call `publish_occurrence` in the same turn as a fresh identification. Wait until the user gives a clear publish/record/save yes in a later turn after the identification-agreement checkpoint.
 
+4b. **Ask for local knowledge (optional)** — After the user confirms they want to publish, ask once:
+   "¿Hay algún conocimiento local, historia o nombre tradicional que quieras guardar junto con el registro? 🌿"
+   (or in their language) — Keep it warm and brief. If they say no or skip, that's fine. Whatever they share goes into `occurrenceRemarks`. Voice notes work great here.
+
 5. **Publish with ALL data** — When calling `publish_occurrence`, you MUST pass:
 
    **Required:**
@@ -42,7 +46,7 @@ When the user wants to publish/record/save a species observation to the communit
    - `vernacularName` — common name from identification
    - `habitat` — from identification result or user context
    - `eventDate` — date of observation (default: today)
-   - `occurrenceRemarks` — any notes from the user
+   - `occurrenceRemarks` — local knowledge, traditional name, story, or cultural note shared by the user (from step 4b)
 
 6. **After publishing** — The tool returns a `hyperscanUrl`. ALWAYS share it with the user:
    "Your observation has been published! 🎉 View it here: <a href="{hyperscanUrl}">Hyperscan</a>"
