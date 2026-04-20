@@ -3,7 +3,7 @@
 // extracting locations, and sending responses.
 // Uses grammY for the Telegram Bot API.
 
-import { Bot, InputFile, InlineKeyboard } from "grammy";
+import { Bot, InputFile, InlineKeyboard, Keyboard } from "grammy";
 import type { EnvConfig } from "./env.js";
 import { formatTelegramHtml } from "./telegram-format.js";
 import { ensurePreferredLanguage, getPreferredLanguage, setPreferredLanguage } from "./user-language.js";
@@ -936,7 +936,7 @@ export async function createTelegramBot(
     webAppUrl: string,
     replyToMessageId?: number
   ): Promise<void> => {
-    const keyboard = new InlineKeyboard().webApp(buttonLabel, webAppUrl);
+    const keyboard = new Keyboard().webApp(buttonLabel, webAppUrl).resized();
     const messageText = formatTelegramHtml(text);
 
     try {
