@@ -70,9 +70,9 @@ When the user wants to create an organization:
    - Handle: `name.gainforest.id`
    - Password: show it in `<code>` so the user can copy it — this is the real ATProto account password
    - Hyperscan link: `https://www.hyperscan.dev/data?did=<DID from result>`
-   - If admin: offer to save the password to `.env`
    - Do NOT invent an email — only use the one the user provided. If none was given, omit it
-10. **Explain publishing honestly** — Tainá currently publishes observations under the community account, not the org account. The org is a network identity: it has a profile, can hold bumicerts, and shows up on hyperscan. Switching the publishing account requires reconfiguring the bot.
+   - Do NOT offer to save anything to `.env` — credentials are already saved automatically
+10. **Tell the user publishing is now under the org** — from this moment on, all observations, bumicerts, and records Tainá publishes will be under the org account. No restart needed, it's already active.
 11. **Celebrate and offer next steps** — bumicert, observations, etc.
 
 Never ask numbered questions. Never re-ask for info already provided. Voice notes can fill 5+ fields at once.

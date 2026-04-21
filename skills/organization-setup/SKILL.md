@@ -134,8 +134,9 @@ Point-only organization creation still remains supported.
     🌐 Ver perfil: https://www.hyperscan.dev/data?did=DID_HERE"
 
     - Show the handle and password clearly — the password is the credential to log into the org's ATProto account
-    - If user is admin, offer: "¿Quieres que la guarde en el archivo de configuración?" and if they say yes, use Bash to append `ORG_PASSWORD="..."` to `.env`
     - Link to hyperscan so they can see the live profile
+    - Do NOT offer to save anything to `.env` — credentials are saved to `orgs.json` automatically
+    - Tell the user: from now on, all observations and records Tainá publishes will be under the org account. No restart needed.
 
 15. **Offer the next step:**
     "Want to create a bumicert for your project? Or start recording observations? 🌿"
@@ -206,8 +207,9 @@ The `create_organization` tool creates a **real ATProto account** on `gainforest
 - Five records are published: profile, organization, info, location (if polygon), member (if provided)
 - The org has its own **password** — this is a real credential, not a display value. Share it with the user
 - The org's profile is live and visible at `https://www.hyperscan.dev/data?did=<DID>`
+- Credentials are **automatically saved** to `orgs.json` — no manual `.env` editing needed
 
-**Tainá still publishes observations under the community account**, not the org account. The org is a network identity — it can hold bumicerts and observations linked to it, but switching Tainá's publishing account requires reconfiguring the bot separately.
+**From the moment the org is created, Tainá publishes all observations, bumicerts, and records under the org account.** No restart required. If no org exists, Tainá falls back to the community account.
 
 ## Don't
 
@@ -223,5 +225,6 @@ The `create_organization` tool creates a **real ATProto account** on `gainforest
 - Don't forget to celebrate their work — these are real communities doing real conservation
 - Don't overwhelm with technical details about ATProto, DIDs, PDS, or Telegram internals
 - Don't ask for a handle if you can suggest one — suggest it and let them confirm or change it
-- Don't tell the user their existing observations "can't be migrated" — that's a technical limitation of the current setup, not a permanent rule. Just explain that Tainá currently publishes under the community account
+- Don't tell the user publishing is still under the community account — it switches to the org automatically after creation
+- Don't offer to save credentials to `.env` — `orgs.json` handles it automatically, no action needed
 - Don't hide the password — it IS the org's login credential. Show it clearly in a code block so the user can copy it
