@@ -1,4 +1,4 @@
-// Create an organization account on the climateai.org ATProto PDS
+// Create an organization account on the gainforest.id ATProto PDS
 // Creates a new ATProto account + profile, organization, and info records
 
 import { AtpAgent } from "@atproto/api";
@@ -11,11 +11,12 @@ import {
 
 export type { TelegramUser };
 
-const PDS_ENDPOINT = "https://climateai.org";
+const PDS_ENDPOINT = "https://gainforest.id";
 
 export interface OrganizationInput {
   // Required
-  handle: string;                    // e.g. "cabarete-sostenible" (without .climateai.org)
+  handle: string;                    // e.g. "cabarete-sostenible" (without .gainforest.id)
+  email?: string;                    // For account recovery on gainforest.id
   displayName: string;               // Organization display name
   description: string;               // About the organization
   organizationType: string[];        // ["nonprofit", "conservation", etc.]
@@ -54,7 +55,7 @@ export interface OrganizationInput {
 export interface OrganizationResult {
   success: true;
   did: string;                       // Created DID
-  handle: string;                    // Full handle e.g. "cabarete-sostenible.climateai.org"
+  handle: string;                    // Full handle e.g. "cabarete-sostenible.gainforest.id"
   password: string;                  // Generated password (for credential storage)
   profileUri: string;
   orgUri: string;
@@ -148,18 +149,18 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
 
   // Normalize handle — lowercase, no spaces
   const handleSlug = input.handle.trim().toLowerCase().replace(/\s+/g, "-");
-  const fullHandle = `${handleSlug}.climateai.org`;
+  const fullHandle = `${handleSlug}.gainforest.id`;
 
   // Step 1: Generate a secure random password
   const password = generatePassword(32);
 
-  // Step 2: Create account on climateai.org
+  // Step 2: Create account on gainforest.id
   let did: string;
   try {
     const createAccountRes = await fetch(`${PDS_ENDPOINT}/xrpc/com.atproto.server.createAccount`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ handle: fullHandle, password }),
+      body: JSON.stringify({ handle: fullHandle, password, ...(input.email && { email: input.email }) }),
     });
 
     if (!createAccountRes.ok) {

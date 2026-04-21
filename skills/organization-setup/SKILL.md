@@ -1,16 +1,16 @@
 ---
 name: organization-setup
-description: Create a new organization on the climateai.org network. Use when users want to set up their community, NGO, or conservation project as an organization. Tainá guides them through a natural conversation, extracting info from voice notes and messages.
+description: Create a new organization on the gainforest.id network. Use when users want to set up their community, NGO, or conservation project as an organization. Tainá guides them through a natural conversation, extracting info from voice notes and messages.
 ---
 
 # Organization Setup
 
-> An organization is a community, NGO, or conservation project with its own handle on climateai.org. When users say "register our group", "create an account for our project", or "I want our own handle", this is the skill to use.
+> An organization is a community, NGO, or conservation project with its own handle on gainforest.id. When users say "register our group", "create an account for our project", or "I want our own handle", this is the skill to use.
 
 ## When to Use
 - User says "set up our organization", "create an org", "register our community", "I want to create an account for our project"
 - User asks how to publish data under their own name or organization
-- User mentions they want their own climateai.org handle
+- User mentions they want their own gainforest.id handle
 - User wants to represent a group, NGO, or community project on the network
 
 ## When NOT to Use
@@ -69,7 +69,7 @@ Point-only organization creation still remains supported.
    "That's amazing work!" / "Love it!" / "What a beautiful project 🌿"
 
 5. **Suggest a handle** based on the name (lowercase, hyphens, max 20 chars):
-   "How about `cabarete-sostenible.climateai.org`? Or would you prefer something different?"
+   "How about `cabarete-sostenible.gainforest.id`? Or would you prefer something different?"
 
 6. **Ask about missing REQUIRED fields only** — if type wasn't mentioned, ask: "Are you a nonprofit, a community group, or something else?" If description is too short, ask for a bit more.
 
@@ -85,15 +85,20 @@ Point-only organization creation still remains supported.
     - "What year were you founded?"
     - "Any goals or focus areas you'd like to highlight?"
 
-9. **Ask about the first member:**
+9. **Ask for email:**
+   "What email should we use for account recovery? This lets you reset the password if it's ever lost."
+   It's optional — if they skip, that's fine, but encourage it since there's no other recovery path.
+
+10. **Ask about the first member:**
     "Should I add you as the first member? What's your name and role?"
 
-10. **Show the confirmation summary** before creating anything:
+11. **Show the confirmation summary** before creating anything:
 
    📛 Name
-   🔗 handle.climateai.org
+   🔗 handle.gainforest.id
    🏷️ Type(s)
    📝 Description (truncated if long)
+   📧 Email (if provided)
     📍 Location (if provided)
     🗺️ Mapped area (if provided)
     🌐 Website (if provided)
@@ -105,14 +110,14 @@ Point-only organization creation still remains supported.
 
    "Ready to create? 🌿"
 
-11. **On confirmation → call `create_organization`** with all collected fields.
+12. **On confirmation → call `create_organization`** with all collected fields.
 
-12. **Read the result carefully.** The tool returns:
+13. **Read the result carefully.** The tool returns:
     ```
     {
       success: true,
       did: "did:plc:...",          ← the org's decentralized identifier
-      handle: "name.climateai.org", ← full handle
+      handle: "name.gainforest.id", ← full handle
       password: "...",              ← the org's ATProto account password (32 chars, random)
       profileUri: "at://...",
       orgUri: "at://...",
@@ -120,11 +125,11 @@ Point-only organization creation still remains supported.
     }
     ```
 
-13. **Present the result to the user** using ONLY the fields the tool returned:
+14. **Present the result to the user** using ONLY the fields the tool returned:
 
     Example message:
     "🎉 ¡Tu organización está activa!
-    🔗 handle.climateai.org
+    🔗 handle.gainforest.id
     🔑 Contraseña: <code>PASSWORD_HERE</code>
     🌐 Ver perfil: https://www.hyperscan.dev/data?did=DID_HERE"
 
@@ -132,18 +137,19 @@ Point-only organization creation still remains supported.
     - If user is admin, offer: "¿Quieres que la guarde en el archivo de configuración?" and if they say yes, use Bash to append `ORG_PASSWORD="..."` to `.env`
     - Link to hyperscan so they can see the live profile
 
-14. **Offer the next step:**
+15. **Offer the next step:**
     "Want to create a bumicert for your project? Or start recording observations? 🌿"
 
 ## Required vs Optional Fields
 
 **Required (must have before creating):**
 - `displayName` — the full name of the organization
-- `handle` — the climateai.org handle (suggest one, let them confirm)
+- `handle` — the gainforest.id handle (suggest one, let them confirm)
 - `organizationType` — nonprofit, community group, research institution, etc.
 - `description` — what the org does (a sentence or two is enough)
 
 **Optional (ask naturally, skip if not provided):**
+- `email` — for account recovery; encourage it but don't block on it
 - `website`, `socialLinks` (twitter, instagram, facebook, linkedin, youtube, tiktok, github, discord, telegram, other)
 - `location`, `country`
 - `polygon` / mapped area when the user wants a territory, land, site boundary, or area
@@ -165,7 +171,7 @@ User can say "skip" or "that's all" at any point — only the 4 required fields 
 - Lowercase the org name
 - Replace spaces with hyphens
 - Remove special characters (accents, punctuation, symbols)
-- Truncate to 20 characters max (climateai.org has limits)
+- Truncate to 20 characters max (gainforest.id has limits)
 - If truncated, cut at a word boundary when possible
 - Examples:
   - "Cabarete Sostenible" → `cabarete-sostenible`
@@ -178,7 +184,7 @@ Always show this before calling `create_organization`. Only include lines where 
 
 ```
 📛 Name
-🔗 handle.climateai.org
+🔗 handle.gainforest.id
 🏷️ Types
 📝 Description (truncated)
 📍 Location (if provided)
@@ -194,7 +200,7 @@ Ready to create? 🌿
 
 ## What the Organization Actually Is
 
-The `create_organization` tool creates a **real ATProto account** on `climateai.org`. This means:
+The `create_organization` tool creates a **real ATProto account** on `gainforest.id`. This means:
 
 - The org gets its own DID (decentralized identifier) — a permanent, verifiable identity
 - Five records are published: profile, organization, info, location (if polygon), member (if provided)
@@ -209,7 +215,7 @@ The `create_organization` tool creates a **real ATProto account** on `climateai.
 - Don't ask for info already provided, even if it was mentioned in passing or in a voice note
 - Don't ask more than one question at a time
 - Don't require optional fields — only 4 fields are truly required
-- Don't invent an email address like `handle@climateai.org` — ATProto doesn't use email for identity, no email is created
+- Don't invent an email address — always ask the user for it. If they don't provide one, leave it blank
 - Don't create the organization without showing the confirmation summary first
 - Don't say "Question 3:" or "Step 2:" — there are no steps, only conversation
 - Don't ask "What is your organization type?" if they already said "we're a nonprofit"

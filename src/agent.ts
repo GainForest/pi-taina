@@ -390,7 +390,8 @@ const createHypercertSchema = Type.Object({
 });
 
 const createOrganizationSchema = Type.Object({
-  handle: Type.String({ description: "Desired handle for the org (without .climateai.org). E.g. \"cabarete-sostenible\"" }),
+  handle: Type.String({ description: "Desired handle for the org (without .gainforest.id). E.g. \"cabarete-sostenible\"" }),
+  email: Type.Optional(Type.String({ description: "Email address for account recovery. Ask the user for this — it lets them recover their gainforest.id account if the password is lost." })),
   displayName: Type.String({ description: "Organization display name" }),
   description: Type.String({ description: "About the organization (a few sentences)" }),
   organizationType: Type.Array(Type.String(), { description: "Organization types: nonprofit, business, government, academic, conservation, community, indigenous, other" }),
@@ -975,7 +976,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
   const createOrganizationTool: ToolDefinition<typeof createOrganizationSchema> = {
     name: 'create_organization',
     label: 'Create Organization',
-    description: 'Create a new organization on the climateai.org network. Creates an account and sets up the organization profile, metadata, and optionally the first member. Call this only after collecting all required info from the user and showing them a confirmation summary.',
+    description: 'Create a new organization on the gainforest.id network. Creates an account and sets up the organization profile, metadata, and optionally the first member. Call this only after collecting all required info from the user and showing them a confirmation summary.',
     parameters: createOrganizationSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       const user = stateRef.state.currentUser;
@@ -987,6 +988,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       const shouldConsumePolygonPoints = Array.isArray(polygonPoints) && polygonPoints.length >= 3;
       const result = await createOrganization({
         handle: params.handle,
+        email: params.email,
         displayName: params.displayName,
         description: params.description,
         organizationType: params.organizationType,
