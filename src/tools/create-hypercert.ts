@@ -1,7 +1,7 @@
 // Publish hypercert activity records to ATProto (org.hypercerts.claim.activity)
 // Used to document conservation or community impact work as permanent records
 
-import { getAtprotoAgent, getCommunityDid } from "../atproto.js";
+import { getPublishingAgent, getPublishingDid } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
 import { getOrgContext } from "../hyperindex.js";
 import type { TelegramUser } from "./publish-occurrence.js";
@@ -61,13 +61,13 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
   let agent;
   try {
     const config = loadEnvConfig();
-    agent = await getAtprotoAgent(config);
+    agent = await getPublishingAgent(config);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, error: `ATProto not configured: ${message}` };
   }
 
-  const did = getCommunityDid();
+  const did = getPublishingDid();
   const createdAt = new Date().toISOString();
 
   // Upload image blob if provided

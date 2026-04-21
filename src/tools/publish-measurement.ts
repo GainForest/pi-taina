@@ -1,7 +1,7 @@
 // Publish Darwin Core MeasurementOrFact records to the community ATProto PDS
 // Links to an occurrence via occurrenceRef (AT-URI)
 
-import { getAtprotoAgent, getCommunityDid } from "../atproto.js";
+import { getPublishingAgent, getPublishingDid } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
 import type { TelegramUser } from "./publish-occurrence.js";
 
@@ -124,13 +124,13 @@ export async function publishMeasurement(input: PublishMeasurementInput): Promis
   let agent;
   try {
     const config = loadEnvConfig();
-    agent = await getAtprotoAgent(config);
+    agent = await getPublishingAgent(config);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, error: `ATProto agent error: ${message}` };
   }
 
-  const did = getCommunityDid();
+  const did = getPublishingDid();
   const createdAt = new Date().toISOString();
   const { id, username, displayName } = input.submittedBy;
   const attribution = username

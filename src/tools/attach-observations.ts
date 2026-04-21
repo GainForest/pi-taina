@@ -1,7 +1,7 @@
 // Attach community biodiversity observations as evidence to a hypercert
 // Creates an org.hypercerts.context.attachment record linking occurrence URIs to a hypercert
 
-import { getAtprotoAgent, getCommunityDid } from "../atproto.js";
+import { getPublishingAgent, getPublishingDid } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
 
 export interface AttachInput {
@@ -98,8 +98,8 @@ export async function attachObservations(input: AttachInput): Promise<AttachResp
   let communityDid: string;
   try {
     const config = loadEnvConfig();
-    agent = await getAtprotoAgent(config);
-    communityDid = getCommunityDid();
+    agent = await getPublishingAgent(config);
+    communityDid = getPublishingDid();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, error: `ATProto not configured: ${message}` };

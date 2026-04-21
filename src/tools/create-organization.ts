@@ -8,6 +8,7 @@ import {
   createCertifiedLocation,
   type CertifiedLocationInput,
 } from "./create-certified-location.js";
+import { saveOrgAccount } from "../org-accounts.js";
 
 export type { TelegramUser };
 
@@ -401,7 +402,9 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     }
   }
 
-  // Step 9: Return success
+  // Step 9: Save credentials for future publishing, then return success
+  saveOrgAccount({ handle: fullHandle, did, password, createdAt });
+
   return {
     success: true,
     did,

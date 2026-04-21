@@ -1,7 +1,7 @@
 // Publish Darwin Core occurrence records to the community ATProto PDS
 // Ported from taina-v3-2, simplified for the community account model
 
-import { getAtprotoAgent, getCommunityDid, getCommunityHandle } from "../atproto.js";
+import { getPublishingAgent, getPublishingDid, getPublishingHandle } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
 import { getOrgContext } from "../hyperindex.js";
 
@@ -104,14 +104,14 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
   let agent;
   try {
     const config = loadEnvConfig();
-    agent = await getAtprotoAgent(config);
+    agent = await getPublishingAgent(config);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, error: `ATProto agent error: ${message}` };
   }
 
-  const did = getCommunityDid();
-  const communityHandle = getCommunityHandle();
+  const did = getPublishingDid();
+  const communityHandle = getPublishingHandle();
 
   // Build recordedBy string — include all three Telegram user identifiers
   // Store Telegram info in occurrenceRemarks for attribution, use handle for recordedBy
