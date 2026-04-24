@@ -25,12 +25,18 @@ When the user wants to publish/record/save a species observation to the communit
    > ("Any use, story, or local knowledge you want to save with this record?")
    If they share something, append it to the local name from step 4. Voice notes are great here. If they skip, that's fine.
 
-6. **Ask: publish now, or save for later?** — After local knowledge has been offered, ask in ONE short line (in the user's language):
-   > "¿Lo publico ahora, o lo guardo para después? 📝"
-   > ("Publish this now, or save for later?")
+6. **Ask: publish now, or save for later?** — This step is MANDATORY and must ALWAYS offer BOTH options in the same question. Even if the user already shared their location and seems ready, you MUST ask them to pick between publishing and drafting. Phrase it in ONE short line (in the user's language):
+   > "¿Lo publico ahora, o lo guardo como borrador para después? 📝"
+   > ("Publish this now, or save it as a draft for later?")
    - If they say **publish / upload / yes / send**: continue to step 7 with `publish_occurrence`.
-   - If they say **save / later / offline / not yet**: continue to step 7 with `save_draft_observation` instead — the draft carries exactly the same fields and will publish as-captured when flushed later. Also follow the `draft-observations` skill for the save reply.
+   - If they say **save / later / offline / draft / not yet**: continue to step 7 with `save_draft_observation` instead — the draft carries exactly the same fields and will publish as-captured when flushed later. Also follow the `draft-observations` skill for the save reply.
    Do not call either tool in the same turn as a fresh identification — wait for this explicit choice.
+
+   **FORBIDDEN phrasings** (never ask it as a one-sided yes/no):
+   - ❌ "Would you like to publish this?"
+   - ❌ "Shall I publish it to the community records?"
+   - ❌ "¿Lo publico?"
+   Always give the user BOTH choices in the same turn.
 
 7. **Call the tool with ALL data** — Whether you're calling `publish_occurrence` or `save_draft_observation`, you MUST pass every available field. A draft must carry the same richness as a live publish:
 
@@ -78,6 +84,7 @@ Map the fields like this:
 ## Dont
 - Never publish or save without a location — always ask if missing
 - Never treat the identification turn as confirmation — the user must confirm in a later turn
+- Never skip step 6 — you MUST always ask "publish now, or save as a draft for later?" and offer BOTH options. Never ask only "shall I publish?" as a yes/no.
 - Never skip the local-knowledge asks (steps 4 and 5) — they run regardless of whether the user publishes now or saves for later
 - Never skip taxonomy fields — always pass them all
 - Never call `publish_occurrence` when the user chose to save for later — call `save_draft_observation` with the same fields instead
