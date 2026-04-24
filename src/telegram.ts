@@ -19,6 +19,8 @@ import {
   getPendingRequests, addMember, removeMember, getMembers, getAdmins 
 } from './whitelist.js';
 import { resetSession } from "./agent.js";
+import { listDrafts, loadDraft, deleteDraft } from "./drafts.js";
+import { publishOccurrence } from "./tools/publish-occurrence.js";
 
 // ─── Exported Types ──────────────────────────────────────────────────────────
 
@@ -555,6 +557,81 @@ export async function createTelegramBot(
           `• ${m.displayName ?? 'Unknown'} (${m.role}) — ID: ${m.userId}`
         );
         await ctx.reply(`${getTelegramLocaleBundle(locale).texts.communityMembersHeader}\n${lines.join('\n')}`);
+        return;
+      }
+
+      // ── Draft queue commands ──────────────────────────────────────────────
+      if (commandName === "drafts") {
+        const drafts = listDrafts(user.id);
+        if (drafts.length === 0) {
+          await ctx.reply("📭 You have no saved drafts.");
+          return;
+        }
+        const lines = drafts.map((d) => {
+          const name = d.vernacularName ? `${d.vernacularName} (${d.scientificName})` : d.scientificName;
+          const date = d.createdAt.slice(0, 10);
+          const imgs = d.imageCount > 0 ? ` · ${d.imageCount} 📸` : "";
+          return `• <code>${d.id}</code>\n  ${escapeHtml(name)} — ${date}${imgs}`;
+        });
+        const body = `📝 <b>Your saved drafts (${drafts.length})</b>\n\n${lines.join("\n\n")}\n\nPublish with <code>/publish &lt;id&gt;</code> or <code>/publish all</code>. Discard with <code>/discard &lt;id&gt;</code>.`;
+        await ctx.reply(body, { parse_mode: "HTML" });
+        return;
+      }
+
+      if (commandName === "publish") {
+        const arg = rawTextForCommand.trim().split(/\s+/)[1];
+        if (!arg) {
+          await ctx.reply("Usage: <code>/publish &lt;draft-id&gt;</code> or <code>/publish all</code>", { parse_mode: "HTML" });
+          return;
+        }
+
+        const targets = arg.toLowerCase() === "all"
+          ? listDrafts(user.id).map((d) => d.id)
+          : [arg];
+
+        if (targets.length === 0) {
+          await ctx.reply("📭 No drafts to publish.");
+          return;
+        }
+
+        for (const draftId of targets) {
+          const input = loadDraft(draftId, user.id);
+          if (!input) {
+            await ctx.reply(`⚠️ Draft not found: <code>${escapeHtml(draftId)}</code>`, { parse_mode: "HTML" });
+            continue;
+          }
+          try {
+            const result = await publishOccurrence(input);
+            if (result.success) {
+              deleteDraft(draftId, user.id);
+              const name = result.vernacularName ? `${result.vernacularName} (${result.scientificName})` : result.scientificName;
+              await ctx.reply(
+                `✅ Published <b>${escapeHtml(name)}</b>\n<a href="${result.hyperscanUrl}">View on Hyperscan</a>`,
+                { parse_mode: "HTML" },
+              );
+            } else {
+              await ctx.reply(`❌ Failed to publish <code>${escapeHtml(draftId)}</code>: ${escapeHtml(result.error)}`, { parse_mode: "HTML" });
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            await ctx.reply(`❌ Error publishing <code>${escapeHtml(draftId)}</code>: ${escapeHtml(message)}`, { parse_mode: "HTML" });
+          }
+        }
+        return;
+      }
+
+      if (commandName === "discard") {
+        const arg = rawTextForCommand.trim().split(/\s+/)[1];
+        if (!arg) {
+          await ctx.reply("Usage: <code>/discard &lt;draft-id&gt;</code>", { parse_mode: "HTML" });
+          return;
+        }
+        const removed = deleteDraft(arg, user.id);
+        if (removed) {
+          await ctx.reply(`🗑️ Draft discarded.`);
+        } else {
+          await ctx.reply(`⚠️ Draft not found: <code>${escapeHtml(arg)}</code>`, { parse_mode: "HTML" });
+        }
         return;
       }
 

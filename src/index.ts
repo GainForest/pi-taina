@@ -5,6 +5,7 @@ import { sendToAgent, disposeAllSessions, getPendingChart, getPendingAudio, getP
 import { getAtprotoAgent, getCommunityDid } from "./atproto.js";
 import { initOrgContext } from "./hyperindex.js";
 import { initWhitelist } from './whitelist.js';
+import { initDrafts } from './drafts.js';
 
 async function main() {
   // 1. Validate required env vars and load typed config (fail fast)
@@ -19,6 +20,10 @@ async function main() {
   // 1b. Initialize access control whitelist
   initWhitelist(config.adminUserId);
   console.log('✅ Whitelist initialized');
+
+  // 1c. Initialize local draft observation queue
+  initDrafts();
+  console.log('✅ Drafts DB initialized');
 
   // 2. Initialize ATProto (optional — warn if not configured, don't crash)
   if (isAtprotoConfigured(config)) {

@@ -14,6 +14,7 @@ import { loadEnvConfig, type EnvConfig } from "./env.js";
 import type { IncomingMessage } from "./telegram.js";
 import { identifySpecies } from "./tools/identify-species.js";
 import { publishOccurrence, type TelegramUser } from "./tools/publish-occurrence.js";
+import { saveDraft, listDrafts, loadDraft, deleteDraft } from "./drafts.js";
 import { publishMeasurement } from "./tools/publish-measurement.js";
 import { geocodeLocation } from "./tools/geocode-location.js";
 import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts, reverseGeocodeAdmin } from "./tools/gfw-api.js";
@@ -468,6 +469,18 @@ const requestPolygonWebAppSchema = Type.Object({
     }),
     { description: 'Optional polygon points to preload into the Web App' },
   )),
+});
+
+// Draft observations — same OccurrenceInput shape as publish, but stored locally.
+// Reuses publishOccurrenceSchema at the tool level (see save_draft_observation below).
+const listDraftsSchema = Type.Object({});
+
+const publishDraftSchema = Type.Object({
+  draftId: Type.String({ description: "The ID of the draft to publish (from list_drafts)" }),
+});
+
+const discardDraftSchema = Type.Object({
+  draftId: Type.String({ description: "The ID of the draft to discard (from list_drafts)" }),
 });
 
 /**
@@ -1201,6 +1214,228 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const saveDraftObservationTool: ToolDefinition<typeof publishOccurrenceSchema> = {
+    name: "save_draft_observation",
+    label: "Save Draft Observation",
+    description:
+      "Save a biodiversity occurrence locally instead of publishing it now. " +
+      "Use when the user wants to upload later (offline fieldwork, deferring the decision). " +
+      "Same parameters as publish_occurrence. The user can flush drafts later with /publish or by asking Tainá.",
+    parameters: publishOccurrenceSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const photos = stateRef.state.photos;
+      const user = stateRef.state.currentUser;
+
+      if (!user) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No user context available" }) }],
+          details: {},
+        };
+      }
+
+      const latestIdentificationTurnId = stateRef.state.latestIdentificationTurnId ?? 0;
+      const latestIdentificationAgreementTurnId = stateRef.state.latestIdentificationAgreementTurnId ?? 0;
+
+      if (!latestIdentificationTurnId) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              error: "Identification required before saving a draft",
+              code: "identification_required",
+              suggestion: "Identify the species first, then ask whether the ID sounds right before saving.",
+            }),
+          }],
+          details: {},
+        };
+      }
+
+      if (!latestIdentificationAgreementTurnId || latestIdentificationAgreementTurnId <= latestIdentificationTurnId) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              error: "Identification agreement required",
+              code: "identification_agreement_required",
+              suggestion: "Ask whether the identification sounds right before saving.",
+            }),
+          }],
+          details: {},
+        };
+      }
+
+      try {
+        const { draftId } = saveDraft({
+          scientificName: params.scientificName,
+          vernacularName: params.vernacularName,
+          decimalLatitude: params.decimalLatitude,
+          decimalLongitude: params.decimalLongitude,
+          locality: params.locality,
+          country: params.country,
+          countryCode: params.countryCode,
+          habitat: params.habitat,
+          behavior: params.behavior,
+          individualCount: params.individualCount,
+          occurrenceRemarks: params.occurrenceRemarks,
+          eventDate: params.eventDate,
+          kingdom: params.kingdom,
+          phylum: params.phylum,
+          class_: params.class_,
+          order: params.order,
+          family: params.family,
+          genus: params.genus,
+          specificEpithet: params.specificEpithet,
+          taxonRank: params.taxonRank,
+          stateProvince: params.stateProvince,
+          municipality: params.municipality,
+          images: photos.length > 0 ? photos : undefined,
+          submittedBy: user,
+        });
+
+        stateRef.state.photos = [];
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              draftId,
+              scientificName: params.scientificName,
+              vernacularName: params.vernacularName,
+              imageCount: photos.length,
+              hint: "Tell the user the observation is saved and can be published later with /publish " + draftId + " or by asking you to upload it.",
+            }),
+          }],
+          details: {},
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: `Failed to save draft: ${message}` }) }],
+          details: {},
+        };
+      }
+    },
+  };
+
+  const listDraftsTool: ToolDefinition<typeof listDraftsSchema> = {
+    name: "list_drafts",
+    label: "List Drafts",
+    description:
+      "List the current user's locally-saved draft observations (not yet published to ATProto). " +
+      "Use when the user asks 'show my drafts', 'what's saved', 'what do I have pending'.",
+    parameters: listDraftsSchema,
+    execute: async (_toolCallId, _params, _signal, _onUpdate, _ctx) => {
+      const user = stateRef.state.currentUser;
+      if (!user) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No user context available" }) }],
+          details: {},
+        };
+      }
+
+      try {
+        const drafts = listDrafts(user.id);
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({ success: true, count: drafts.length, drafts }),
+          }],
+          details: {},
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: message }) }],
+          details: {},
+        };
+      }
+    },
+  };
+
+  const publishDraftTool: ToolDefinition<typeof publishDraftSchema> = {
+    name: "publish_draft",
+    label: "Publish Draft",
+    description:
+      "Publish a previously-saved draft observation to ATProto. " +
+      "Use when the user asks to upload a specific draft (by ID or description). " +
+      "If they say 'upload the jaguar one', call list_drafts first to find the matching ID.",
+    parameters: publishDraftSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const user = stateRef.state.currentUser;
+      if (!user) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No user context available" }) }],
+          details: {},
+        };
+      }
+
+      const input = loadDraft(params.draftId, user.id);
+      if (!input) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              error: "Draft not found or not owned by this user",
+              code: "draft_not_found",
+            }),
+          }],
+          details: {},
+        };
+      }
+
+      const result = await publishOccurrence(input);
+      if (result.success) {
+        deleteDraft(params.draftId, user.id);
+        stateRef.state.latestPublishedOccurrence = {
+          uri: result.uri,
+          occurrenceID: result.occurrenceID,
+          scientificName: result.scientificName,
+          kingdom: input.kingdom,
+        };
+      }
+
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        details: {},
+      };
+    },
+  };
+
+  const discardDraftTool: ToolDefinition<typeof discardDraftSchema> = {
+    name: "discard_draft",
+    label: "Discard Draft",
+    description:
+      "Delete a locally-saved draft observation without publishing it. " +
+      "Use when the user says 'discard', 'delete', 'throw away' a draft.",
+    parameters: discardDraftSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const user = stateRef.state.currentUser;
+      if (!user) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No user context available" }) }],
+          details: {},
+        };
+      }
+
+      const removed = deleteDraft(params.draftId, user.id);
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            success: removed,
+            draftId: params.draftId,
+            ...(removed ? {} : { error: "Draft not found or not owned by this user" }),
+          }),
+        }],
+        details: {},
+      };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
@@ -1218,6 +1453,10 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     requestPolygonWebAppTool as unknown as ToolDefinition,
     detectAudioMothSDTool as unknown as ToolDefinition,
     uploadAudioMothSDTool as unknown as ToolDefinition,
+    saveDraftObservationTool as unknown as ToolDefinition,
+    listDraftsTool as unknown as ToolDefinition,
+    publishDraftTool as unknown as ToolDefinition,
+    discardDraftTool as unknown as ToolDefinition,
   ];
 }
 

@@ -1,5 +1,5 @@
 // Smoke test script for Hypersphere integration
-// Run: npx tsx src/test-smoke.ts [hyperindex|org|occurrence|hypercert|attach|polygon|all]
+// Run: npx tsx src/test-smoke.ts [hyperindex|org|occurrence|hypercert|attach|polygon|drafts|all]
 // Reads credentials from .env via dotenv
 
 import 'dotenv/config';
@@ -22,6 +22,8 @@ import {
   resolveOrganizationPolygonPoints,
   resetSession,
 } from './agent.js';
+import { initDrafts, saveDraft, listDrafts, loadDraft, deleteDraft } from './drafts.js';
+import type { OccurrenceInput } from './tools/publish-occurrence.js';
 
 // ─── Result tracking ──────────────────────────────────────────────────────────
 
@@ -753,6 +755,124 @@ async function testPolygonPrimitives(): Promise<void> {
   }
 }
 
+// ─── Subcommand: drafts ───────────────────────────────────────────────────────
+
+async function testDrafts(): Promise<void> {
+  console.log('\n── drafts ──────────────────────────────────────────────────────');
+
+  try {
+    initDrafts();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('drafts:init', msg));
+    return;
+  }
+
+  // Use a very high, unique user ID to avoid colliding with real users.
+  const smokeUserId = 999_999_999_001;
+  const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+  const fakePng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+  const input: OccurrenceInput = {
+    scientificName: 'Testus draftus',
+    vernacularName: 'Smoke Draft',
+    decimalLatitude: -3.4653,
+    decimalLongitude: -62.2159,
+    locality: 'Smoke Test Forest',
+    country: 'Brazil',
+    countryCode: 'BR',
+    kingdom: 'Animalia',
+    phylum: 'Chordata',
+    class_: 'Testia',
+    order: 'Testiformes',
+    family: 'Testidae',
+    genus: 'Testus',
+    specificEpithet: 'draftus',
+    taxonRank: 'species',
+    habitat: 'SMOKE TEST — not real',
+    occurrenceRemarks: 'Draft roundtrip test',
+    images: [
+      { data: fakeJpeg, mimeType: 'image/jpeg' },
+      { data: fakePng, mimeType: 'image/png' },
+    ],
+    submittedBy: { id: smokeUserId, username: 'smoke-test', displayName: 'Smoke Test' },
+  };
+
+  let savedId = '';
+
+  try {
+    const { draftId } = saveDraft(input);
+    savedId = draftId;
+    assert(typeof draftId === 'string' && draftId.length > 0, 'expected a draft ID');
+    results.push(pass('drafts:save', `saved draft ${draftId.slice(0, 8)}…`));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('drafts:save', msg));
+    return;
+  }
+
+  try {
+    const drafts = listDrafts(smokeUserId);
+    const found = drafts.find((d) => d.id === savedId);
+    assert(found !== undefined, 'saved draft should appear in listDrafts');
+    assert(found!.scientificName === 'Testus draftus', `scientificName mismatch: ${found!.scientificName}`);
+    assert(found!.imageCount === 2, `imageCount should be 2, got ${found!.imageCount}`);
+    results.push(pass('drafts:list', `listed draft with ${found!.imageCount} images`));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('drafts:list', msg));
+  }
+
+  try {
+    const loaded = loadDraft(savedId, smokeUserId);
+    assert(loaded !== null, 'loadDraft should return the saved draft');
+    assert(loaded!.scientificName === input.scientificName, 'scientificName should round-trip');
+    assert(loaded!.kingdom === input.kingdom, 'kingdom should round-trip');
+    assert(loaded!.class_ === input.class_, 'class_ should round-trip (note JS reserved-word quirk)');
+    assert(loaded!.decimalLatitude === input.decimalLatitude, 'decimalLatitude should round-trip');
+    assert(loaded!.decimalLongitude === input.decimalLongitude, 'decimalLongitude should round-trip');
+    assert(loaded!.occurrenceRemarks === input.occurrenceRemarks, 'occurrenceRemarks should round-trip');
+    assert(loaded!.submittedBy.id === smokeUserId, 'submittedBy.id should round-trip');
+
+    const loadedImages = loaded!.images ?? [];
+    assert(loadedImages.length === 2, `expected 2 images after load, got ${loadedImages.length}`);
+    assert(loadedImages[0].mimeType === 'image/jpeg', `image[0] mimeType: ${loadedImages[0].mimeType}`);
+    assert(loadedImages[1].mimeType === 'image/png', `image[1] mimeType: ${loadedImages[1].mimeType}`);
+    assert(loadedImages[0].data.equals(fakeJpeg), 'image[0] bytes should match exactly');
+    assert(loadedImages[1].data.equals(fakePng), 'image[1] bytes should match exactly');
+
+    results.push(pass('drafts:roundtrip', 'all fields + image bytes round-tripped'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('drafts:roundtrip', msg));
+  }
+
+  // Ownership guard — another user cannot load this draft.
+  try {
+    const otherUser = smokeUserId + 1;
+    const stolen = loadDraft(savedId, otherUser);
+    assert(stolen === null, 'other users must not be able to load someone else\'s draft');
+    const removedByStranger = deleteDraft(savedId, otherUser);
+    assert(removedByStranger === false, 'other users must not be able to delete someone else\'s draft');
+    results.push(pass('drafts:ownership', 'other users blocked from load/delete'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('drafts:ownership', msg));
+  }
+
+  // Cleanup
+  try {
+    const removed = deleteDraft(savedId, smokeUserId);
+    assert(removed, 'deleteDraft should return true for owner');
+    const after = loadDraft(savedId, smokeUserId);
+    assert(after === null, 'draft should be gone after deleteDraft');
+    results.push(pass('drafts:delete', 'cleanly deleted row + image directory'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('drafts:delete', msg));
+  }
+}
+
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 function printSummary(): void {
@@ -796,9 +916,14 @@ async function main(): Promise<void> {
       await testPolygonPrimitives();
       break;
 
+    case 'drafts':
+      await testDrafts();
+      break;
+
     case 'all':
     default:
       await testPolygonPrimitives();
+      await testDrafts();
       await testHyperindex();
       await testOrg();
       await testOccurrence();

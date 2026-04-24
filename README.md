@@ -198,6 +198,31 @@ From Telegram, admins can use these commands:
 
 ---
 
+## Draft Observations (offline / save-for-later)
+
+Every observation can either be published to ATProto immediately OR saved locally first and uploaded later. This is useful for offline fieldwork, or when you want to defer the decision to publish.
+
+After Tainá identifies a species and you confirm the ID, she will ask:
+
+> "Publish this now, or save it for later? 📝"
+
+If you choose **save**, the full observation (scientific name, taxonomy, location, images, local knowledge, everything) is stored in `data/drafts.db` (SQLite) with image bytes under `data/drafts/<draft-id>/`. Nothing leaves the device until you publish.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/drafts` | List your saved drafts (ID, species, date, image count) |
+| `/publish <id>` | Publish one saved draft to ATProto |
+| `/publish all` | Publish every saved draft you have, one after another |
+| `/discard <id>` | Delete a saved draft without publishing |
+
+You can also ask Tainá conversationally: "show my drafts", "upload the jaguar one", "publish them all", "discard the last one".
+
+Drafts are scoped per Telegram user — you can only publish or discard your own drafts.
+
+---
+
 ## Skills
 
 Skills are documents that teach Tainá how to use each tool. They live in `skills/` and are referenced by the agent at runtime. Each skill is self-contained and can be edited to customize behavior.
@@ -214,6 +239,7 @@ Skills are documents that teach Tainá how to use each tool. They live in `skill
 | `nearby-species/` | How to search for species near a location using iNaturalist |
 | `weather/` | How to provide weather forecasts via Open-Meteo |
 | `organization-setup/` | How to create community organizations, including Telegram Web App polygon capture and a pasted fallback if the automatic handoff doesn't arrive |
+| `draft-observations/` | How to save observations locally for later upload (offline fieldwork), and how to list / publish / discard drafts on command |
 
 Tainá can also **build new skills on demand** — if a community member asks for something Tainá can't do yet, she can write and save a new skill in the `./skills/` directory.
 
