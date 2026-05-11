@@ -26,6 +26,10 @@ export interface EnvConfig {
 
   // Polygon Web App (optional — enables organization territory capture)
   polygonWebAppBaseUrl: string;
+
+  // GainForest invite code (optional — used as default for org creation
+  // on gainforest.id when the user doesn't supply one inline).
+  gainforestInviteCode: string | undefined;
 }
 
 // Validate required env vars and return typed config
@@ -73,6 +77,8 @@ export function loadEnvConfig(): EnvConfig {
 
     polygonWebAppBaseUrl:
       process.env.POLYGON_WEB_APP_BASE_URL || "https://polygons-gainforest.vercel.app",
+
+    gainforestInviteCode: process.env.GAINFOREST_INVITE_CODE || undefined,
   };
 }
 

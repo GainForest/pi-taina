@@ -118,6 +118,7 @@ Copy `.env.example` to `.env` and set the following variables:
 | `ATPROTO_HANDLE` | For publishing | Community ATProto/Bluesky handle (e.g. `taina-amazon.bsky.social`) |
 | `ATPROTO_PASSWORD` | For publishing | App password for the ATProto account (not your main password) |
 | `ATPROTO_SERVICE` | No | ATProto service URL (default: `https://bsky.social`). Change if your community runs its own PDS |
+| `GAINFOREST_INVITE_CODE` | For org creation | Invite code for the `gainforest.id` PDS. Required to create new organizations. If unset, Tainá asks the user for one during the setup flow |
 | `ANTHROPIC_API_KEY` | No | Enables Claude models as an alternative provider |
 | `OPENAI_API_KEY` | No | Enables GPT models as an alternative provider |
 | `PI_MODEL` | No | Override the default conversational model (format: `provider/model-id`, e.g. `google/gemini-2.5-flash`) |

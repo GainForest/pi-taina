@@ -396,14 +396,15 @@ const createOrganizationSchema = Type.Object({
   displayName: Type.String({ description: "Organization display name" }),
   description: Type.String({ description: "About the organization (a few sentences)" }),
   organizationType: Type.Array(Type.String(), { description: "Organization types: nonprofit, business, government, academic, conservation, community, indigenous, other" }),
+  country: Type.String({ description: "Country where the org is based, as ISO 3166-1 alpha-2 code (e.g. 'DO' for Dominican Republic, 'BR' for Brazil, 'CO' for Colombia). Required by the lexicon." }),
+  objectives: Type.Array(Type.String(), { description: "Main goals/objectives (required). Valid values: Conservation, Research, Education, Community, Other. At least one." }),
+  inviteCode: Type.Optional(Type.String({ description: "Invite code for gainforest.id. Required by the server but not by this schema — if omitted, the tool falls back to the GAINFOREST_INVITE_CODE env var. If neither is set, the tool returns an error and you should ask the user for an invite code before retrying." })),
   website: Type.Optional(Type.String({ description: "Organization website URL" })),
   foundedDate: Type.Optional(Type.String({ description: "Year or date founded (ISO 8601)" })),
-  country: Type.Optional(Type.String({ description: "Country where the org is based" })),
   urls: Type.Optional(Type.Array(Type.Object({
     url: Type.String({ description: "URL" }),
     label: Type.Optional(Type.String({ description: "Label for the URL" })),
   }), { description: "Social media and other URLs" })),
-  objectives: Type.Optional(Type.Array(Type.String(), { description: "Main goals/objectives. Valid values: Conservation, Research, Education, Community, Other" })),
   ecosystemTypes: Type.Optional(Type.Array(Type.String(), { description: "Ecosystem types the org works in: tropical-rainforest, mangrove, coral-reef, wetland, savanna, grassland, boreal-forest, temperate-forest, alpine, marine, freshwater, urban, agroforestry, other" })),
   focusSpeciesGroups: Type.Optional(Type.Array(Type.String(), { description: "Species groups the org focuses on: birds, mammals, reptiles, amphibians, fish, insects, trees, shrubs, fungi, coral, other" })),
   socialLinks: Type.Optional(Type.Array(Type.Object({
@@ -420,11 +421,6 @@ const createOrganizationSchema = Type.Object({
     }),
     { description: "Polygon points for the organization boundary" },
   )),
-  memberName: Type.Optional(Type.String({ description: "Name of the first member (person creating the org)" })),
-  memberRole: Type.Optional(Type.String({ description: "Role of the first member (e.g. Director, Coordinator)" })),
-  memberEmail: Type.Optional(Type.String({ description: "Email of the first member" })),
-  memberLanguages: Type.Optional(Type.Array(Type.String(), { description: "Languages the first member speaks" })),
-  memberExpertise: Type.Optional(Type.Array(Type.String(), { description: "Areas of expertise of the first member" })),
 });
 
 const attachObservationsSchema = Type.Object({
@@ -989,7 +985,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
   const createOrganizationTool: ToolDefinition<typeof createOrganizationSchema> = {
     name: 'create_organization',
     label: 'Create Organization',
-    description: 'Create a new organization on the gainforest.id network. Creates an account and sets up the organization profile, metadata, and optionally the first member. Call this only after collecting all required info from the user and showing them a confirmation summary.',
+    description: 'Create a new organization on the gainforest.id network. Creates an account and sets up the organization profile, metadata, and (if a polygon or point was provided) a default site. Call this only after collecting all required info from the user and showing them a confirmation summary. Required: handle, displayName, description, organizationType, country (ISO 3166-1 alpha-2), and at least one objective.',
     parameters: createOrganizationSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       const user = stateRef.state.currentUser;
@@ -1005,11 +1001,12 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         displayName: params.displayName,
         description: params.description,
         organizationType: params.organizationType,
+        country: params.country,
+        objectives: params.objectives,
+        inviteCode: params.inviteCode,
         website: params.website,
         foundedDate: params.foundedDate,
-        country: params.country,
         urls: params.urls,
-        objectives: params.objectives,
         ecosystemTypes: params.ecosystemTypes,
         focusSpeciesGroups: params.focusSpeciesGroups,
         socialLinks: params.socialLinks,
@@ -1017,11 +1014,6 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         decimalLongitude: params.longitude,
         locationName: params.locationName,
         polygonPoints,
-        memberName: params.memberName,
-        memberRole: params.memberRole,
-        memberEmail: params.memberEmail,
-        memberLanguages: params.memberLanguages,
-        memberExpertise: params.memberExpertise,
         avatar: photos.length > 0 ? photos[photos.length - 1] : undefined,
         submittedBy: user,
       });

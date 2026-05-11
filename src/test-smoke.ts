@@ -1,5 +1,5 @@
 // Smoke test script for Hypersphere integration
-// Run: npx tsx src/test-smoke.ts [hyperindex|org|occurrence|hypercert|attach|polygon|drafts|all]
+// Run: npx tsx src/test-smoke.ts [hyperindex|org|org-shapes|occurrence|hypercert|attach|polygon|drafts|all]
 // Reads credentials from .env via dotenv
 
 import 'dotenv/config';
@@ -14,6 +14,12 @@ import type { AtpAgent } from '@atproto/api';
 import { buildPolygonWebAppUrl, type PolygonPoint } from './tools/build-polygon-webapp-url.js';
 import { parsePolygonWebAppPayload } from './tools/parse-polygon-webapp-payload.js';
 import { createCertifiedLocation, type CertifiedLocationInput } from './tools/create-certified-location.js';
+import {
+  buildOrgInfoRecord,
+  buildDefaultSiteRecord,
+  createOrganization,
+  type OrganizationInput,
+} from './tools/create-organization.js';
 import {
   clearOrganizationPolygonPoints,
   getOrganizationPolygonPoints,
@@ -173,6 +179,7 @@ async function loginAtproto(): Promise<AtpAgent> {
     gfwDataApiKey: undefined,
     polygonWebAppBaseUrl: 'https://polygons-gainforest.vercel.app',
     adminUserId: 0,
+    gainforestInviteCode: undefined,
   };
 
   // getAtprotoAgent caches on first call — subsequent calls return the same instance
@@ -755,6 +762,162 @@ async function testPolygonPrimitives(): Promise<void> {
   }
 }
 
+// ─── Subcommand: org-shapes ───────────────────────────────────────────────────
+// Lexicon-shape checks for the records create_organization writes. No network.
+// Catches drift from the curated lexicons published at hyperscan.dev/agents.
+
+async function testOrgShapes(): Promise<void> {
+  console.log('\n── org-shapes ──────────────────────────────────────────────────');
+
+  const baseInput: OrganizationInput = {
+    handle: 'shape-test',
+    displayName: 'Cabarete Sostenible',
+    description: 'We restore mangroves on the north coast of the Dominican Republic. Working with local fishers and youth.',
+    organizationType: ['nonprofit', 'conservation'],
+    country: 'DO',
+    objectives: ['Conservation', 'Community'],
+    website: 'https://example.org',
+    ecosystemTypes: ['mangrove'],
+    focusSpeciesGroups: ['fish', 'trees'],
+    foundedDate: '2018-01-01T00:00:00.000Z',
+    socialLinks: [{ platform: 'instagram', url: 'https://instagram.com/example' }],
+    submittedBy: { id: 1, username: 'shape-test', displayName: 'Shape Test' },
+  };
+  const createdAt = '2026-05-11T00:00:00.000Z';
+
+  // ─── info: richtext shortDescription ─────────────────────────────────────────
+  try {
+    const info = buildOrgInfoRecord(baseInput, createdAt);
+    assert(info.$type === 'app.gainforest.organization.info', `unexpected $type: ${String(info.$type)}`);
+    const sd = info.shortDescription as Record<string, unknown> | undefined;
+    assert(sd !== undefined && typeof sd === 'object', 'shortDescription must be an object, not a string');
+    assert(sd.$type === 'app.gainforest.common.defs#richtext', `shortDescription must be richtext, got ${String(sd.$type)}`);
+    assert(typeof sd.text === 'string' && sd.text.length > 0, 'shortDescription.text must be a non-empty string');
+    results.push(pass('org-shapes:info-shortDescription', 'wrapped as app.gainforest.common.defs#richtext'));
+  } catch (err) {
+    results.push(fail('org-shapes:info-shortDescription', err instanceof Error ? err.message : String(err)));
+  }
+
+  // ─── info: linearDocument longDescription ────────────────────────────────────
+  try {
+    const info = buildOrgInfoRecord(baseInput, createdAt);
+    const ld = info.longDescription as Record<string, unknown> | undefined;
+    assert(ld !== undefined && typeof ld === 'object', 'longDescription must be an object, not a string');
+    assert(ld.$type === 'pub.leaflet.pages.linearDocument', `longDescription must be linearDocument, got ${String(ld.$type)}`);
+    const blocks = ld.blocks as Array<Record<string, unknown>> | undefined;
+    assert(Array.isArray(blocks) && blocks.length >= 1, 'longDescription.blocks must be a non-empty array');
+    const entry = blocks[0];
+    const block = entry.block as Record<string, unknown> | undefined;
+    assert(block !== undefined && block.$type === 'pub.leaflet.blocks.text', `first block must be pub.leaflet.blocks.text, got ${String(block?.$type)}`);
+    assert(typeof block.plaintext === 'string' && block.plaintext.length > 0, 'block.plaintext must carry the description');
+    results.push(pass('org-shapes:info-longDescription', 'wrapped as pub.leaflet.pages.linearDocument with a text block'));
+  } catch (err) {
+    results.push(fail('org-shapes:info-longDescription', err instanceof Error ? err.message : String(err)));
+  }
+
+  // ─── info: required fields per lexicon ───────────────────────────────────────
+  try {
+    const info = buildOrgInfoRecord(baseInput, createdAt);
+    const required = ['displayName', 'shortDescription', 'longDescription', 'objectives', 'country', 'visibility', 'createdAt'];
+    for (const key of required) {
+      assert(info[key] !== undefined, `required field "${key}" missing from info record`);
+    }
+    assert(info.visibility === 'Public', `visibility must be "Public", got ${String(info.visibility)}`);
+    assert(info.country === 'DO', `country must be "DO", got ${String(info.country)}`);
+    assert(Array.isArray(info.objectives) && (info.objectives as string[]).length > 0, 'objectives must be a non-empty array');
+    results.push(pass('org-shapes:info-required', 'all 7 required fields present'));
+  } catch (err) {
+    results.push(fail('org-shapes:info-required', err instanceof Error ? err.message : String(err)));
+  }
+
+  // ─── defaultSite shape ───────────────────────────────────────────────────────
+  try {
+    const uri = 'at://did:plc:smoke/app.certified.location/abc123';
+    const ds = buildDefaultSiteRecord(uri, createdAt);
+    assert(ds.$type === 'app.gainforest.organization.defaultSite', `unexpected $type: ${String(ds.$type)}`);
+    assert(ds.site === uri, `site must point at the location at-uri, got ${String(ds.site)}`);
+    assert(ds.createdAt === createdAt, 'createdAt must be carried through');
+    results.push(pass('org-shapes:defaultSite', 'points at the certified location at-uri'));
+  } catch (err) {
+    results.push(fail('org-shapes:defaultSite', err instanceof Error ? err.message : String(err)));
+  }
+
+  // ─── validation: missing country / objectives / short displayName ────────────
+  // Stash + clear GAINFOREST_INVITE_CODE so these checks exercise the validation
+  // branches we care about and don't reach the invite-code branch.
+  const savedInviteCode = process.env.GAINFOREST_INVITE_CODE;
+  delete process.env.GAINFOREST_INVITE_CODE;
+
+  try {
+    const r = await createOrganization({ ...baseInput, inviteCode: 'test-code', country: '' });
+    assert(!r.success, 'expected missing country to be rejected');
+    assert(r.error.toLowerCase().includes('country'), `expected country error, got: ${r.error}`);
+    results.push(pass('org-shapes:validate-country', 'rejected missing country'));
+  } catch (err) {
+    results.push(fail('org-shapes:validate-country', err instanceof Error ? err.message : String(err)));
+  }
+
+  try {
+    const r = await createOrganization({ ...baseInput, inviteCode: 'test-code', objectives: [] });
+    assert(!r.success, 'expected empty objectives to be rejected');
+    assert(r.error.toLowerCase().includes('objectives'), `expected objectives error, got: ${r.error}`);
+    results.push(pass('org-shapes:validate-objectives', 'rejected empty objectives'));
+  } catch (err) {
+    results.push(fail('org-shapes:validate-objectives', err instanceof Error ? err.message : String(err)));
+  }
+
+  try {
+    const r = await createOrganization({ ...baseInput, inviteCode: 'test-code', displayName: 'Short' });
+    assert(!r.success, 'expected too-short displayName to be rejected');
+    assert(r.error.toLowerCase().includes('displayname'), `expected displayName error, got: ${r.error}`);
+    results.push(pass('org-shapes:validate-displayName', 'rejected displayName under 8 chars'));
+  } catch (err) {
+    results.push(fail('org-shapes:validate-displayName', err instanceof Error ? err.message : String(err)));
+  }
+
+  // ─── invite code: required when neither param nor env var is set ─────────────
+  try {
+    const r = await createOrganization(baseInput);
+    assert(!r.success, 'expected missing invite code to be rejected before any network call');
+    assert(r.error.toLowerCase().includes('invite code'), `expected invite-code error, got: ${r.error}`);
+    results.push(pass('org-shapes:validate-inviteCode-missing', 'rejected when neither inviteCode param nor GAINFOREST_INVITE_CODE env var is set'));
+  } catch (err) {
+    results.push(fail('org-shapes:validate-inviteCode-missing', err instanceof Error ? err.message : String(err)));
+  }
+
+  // ─── invite code: env-var fallback should let validation past the code gate ──
+  try {
+    process.env.GAINFOREST_INVITE_CODE = 'env-fallback-code';
+    // Force a different earlier check to fail so we know the invite gate passed.
+    const r = await createOrganization({ ...baseInput, displayName: 'Short' });
+    assert(!r.success, 'expected too-short displayName to still be rejected with env code set');
+    assert(r.error.toLowerCase().includes('displayname'), `expected displayName error (proving invite-code gate was passed), got: ${r.error}`);
+    results.push(pass('org-shapes:inviteCode-envFallback', 'GAINFOREST_INVITE_CODE env var is used when inviteCode param is omitted'));
+  } catch (err) {
+    results.push(fail('org-shapes:inviteCode-envFallback', err instanceof Error ? err.message : String(err)));
+  } finally {
+    if (savedInviteCode === undefined) {
+      delete process.env.GAINFOREST_INVITE_CODE;
+    } else {
+      process.env.GAINFOREST_INVITE_CODE = savedInviteCode;
+    }
+  }
+
+  // ─── confirm no member record fields leak through OrganizationInput ──────────
+  try {
+    // TS-level check: if these properties existed, the cast would compile differently.
+    // Runtime guard — ensure buildOrgInfoRecord output never contains member info.
+    const info = buildOrgInfoRecord(baseInput, createdAt) as Record<string, unknown>;
+    const keys = Object.keys(info);
+    for (const banned of ['memberName', 'memberRole', 'memberEmail', 'firstName', 'lastName']) {
+      assert(!keys.includes(banned), `info record must not contain member field "${banned}"`);
+    }
+    results.push(pass('org-shapes:no-member-fields', 'info record carries no member fields'));
+  } catch (err) {
+    results.push(fail('org-shapes:no-member-fields', err instanceof Error ? err.message : String(err)));
+  }
+}
+
 // ─── Subcommand: drafts ───────────────────────────────────────────────────────
 
 async function testDrafts(): Promise<void> {
@@ -920,10 +1083,15 @@ async function main(): Promise<void> {
       await testDrafts();
       break;
 
+    case 'org-shapes':
+      await testOrgShapes();
+      break;
+
     case 'all':
     default:
       await testPolygonPrimitives();
       await testDrafts();
+      await testOrgShapes();
       await testHyperindex();
       await testOrg();
       await testOccurrence();
