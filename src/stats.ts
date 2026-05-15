@@ -11,6 +11,7 @@ import * as path from "path";
 import { execSync } from "child_process";
 import Database from "better-sqlite3";
 import "dotenv/config";
+import { getPrimaryOrgAccount } from "./org-accounts.js";
 
 const DATA_DIR = "./data";
 const DRAFTS_DB = path.join(DATA_DIR, "drafts.db");
@@ -79,6 +80,16 @@ function readWhitelist(): { total: number; admins: number; pending: number } {
   }
 }
 
+function readAtprotoIdentity(): { handle: string | null; did: string | null } {
+  try {
+    const org = getPrimaryOrgAccount();
+    if (org) return { handle: org.handle, did: org.did };
+  } catch {
+    // orgs.json missing or malformed — fall through to env
+  }
+  return { handle: process.env.ATPROTO_HANDLE ?? null, did: null };
+}
+
 function readLanguageUsers(): number {
   if (!fs.existsSync(LANGUAGES_PATH)) return 0;
   try {
@@ -120,9 +131,7 @@ function main() {
     generated_at: new Date().toISOString(),
     version,
     git_sha: gitSha,
-    atproto: {
-      handle: process.env.ATPROTO_HANDLE ?? null,
-    },
+    atproto: readAtprotoIdentity(),
     drafts: draftStats,
     whitelist,
     languages: { users: languageUsers },
