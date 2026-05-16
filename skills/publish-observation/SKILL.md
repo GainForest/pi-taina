@@ -3,9 +3,11 @@
 ## When to use
 When the user wants to publish/record/save a species observation to the community data store — OR when they want to save it locally first (see step 6 below).
 
+> **Note — photo-less drafts**: If the user explicitly says they want to save a draft now and attach a picture later (no photo in this turn), skip steps 1 and 3 and go straight to gathering location + name + any local knowledge, then `save_draft_observation` with the scientific name the user typed and `images` left empty. The draft cannot be published until a picture is attached — see `draft-observations`.
+
 ## Flow — FOLLOW THIS EXACTLY
 
-1. **Species ID required** — You must have identified the species first (via identify_species). If not, ask the user to send a photo first.
+1. **Species ID required (photo path)** — For the normal flow you must have identified the species first (via identify_species). If the user has no photo and wants to save a draft, they must type the scientific name themselves — go to the photo-less branch in `draft-observations`.
 
 2. **Location required** — Before publishing or saving, you MUST have a location. Check if:
    - The user already shared a Telegram location (GPS coordinates available)
@@ -13,7 +15,14 @@ When the user wants to publish/record/save a species observation to the communit
    - If neither: **ASK for location**. Say something like: "📍 Where did you spot this? You can share your location or tell me the place name."
    - Use `geocode_location` to convert place names to coordinates — this also gives you `locality`, `country`, `countryCode`, `stateProvince`, `municipality` to pass along.
 
-3. **Ask if the ID sounds right** — do not move toward publishing until the user has had a later turn to confirm the identification feels right.
+3. **Ask if the ID sounds right** — exactly ONCE, in a separate turn. Phrase it as a soft check, not a publish confirmation:
+   > "¿Te parece que sí es {species}?"
+   > ("Does {species} sound right to you?")
+
+   When the user replies:
+   - If they correct you (e.g. "es un cupuaçu!") — update the species silently, acknowledge, and **treat that correction itself as the agreement**. Do NOT re-ask "¿te parece bien?" for the corrected species. The user already gave you the right answer; asking again is annoying and triggers loops.
+   - If they affirm ("sí", "yes", "correcto") — the ID is locked. Move on.
+   - **Once the user has agreed (or corrected you), the species is LOCKED.** Do not re-confirm the species again at any later step. Re-asking "¿me confirmas que sí es {species}?" after this point is forbidden and is what causes the confirmation loop.
 
 4. **Ask for a local/traditional name** — Once the ID is agreed, ask in one short line (in the user's language):
    > "¿Tiene un nombre local o tradicional esta especie? 🌿"
@@ -28,15 +37,24 @@ When the user wants to publish/record/save a species observation to the communit
 6. **Ask: publish now, or save for later?** — This step is MANDATORY and must ALWAYS offer BOTH options in the same question. Even if the user already shared their location and seems ready, you MUST ask them to pick between publishing and drafting. Phrase it in ONE short line (in the user's language):
    > "¿Lo publico ahora, o lo guardo como borrador para después? 📝"
    > ("Publish this now, or save it as a draft for later?")
-   - If they say **publish / upload / yes / send**: continue to step 7 with `publish_occurrence`.
-   - If they say **save / later / offline / draft / not yet**: continue to step 7 with `save_draft_observation` instead — the draft carries exactly the same fields and will publish as-captured when flushed later. Also follow the `draft-observations` skill for the save reply.
+
+   **This is the ONLY confirmation turn between agreement and the tool call.** Do not insert any other confirmation step here. After the user answers this one question, call the tool — do NOT ask "¿confirmas?" or "¿estás seguro?" or "¿de verdad?". One question, one answer, one tool call.
+
+   **Interpreting the user's reply:**
+   - **Publish path** — "publica", "publish", "súbelo", "upload", "ahora", "ya", "go ahead", "do it", or a bare "sí"/"yes" (since this question is now the active prompt, a plain affirmation defaults to publish). Call `publish_occurrence`.
+   - **Draft path** — "save", "later", "draft", "borrador", "offline", "más tarde", "todavía no", "not yet". Call `save_draft_observation`. Also follow the `draft-observations` skill for the save reply.
+
    Do not call either tool in the same turn as a fresh identification — wait for this explicit choice.
 
-   **FORBIDDEN phrasings** (never ask it as a one-sided yes/no):
-   - ❌ "Would you like to publish this?"
-   - ❌ "Shall I publish it to the community records?"
-   - ❌ "¿Lo publico?"
-   Always give the user BOTH choices in the same turn.
+   **FORBIDDEN phrasings — these have caused real confirmation loops; do NOT use any variant**:
+   - ❌ "Would you like to publish this?" — one-sided yes/no
+   - ❌ "Shall I publish it to the community records?" — one-sided yes/no
+   - ❌ "¿Lo publico?" — one-sided yes/no
+   - ❌ "¿Me confirmas que lo registramos como {species}?" — re-asks about ID, not about publish/draft
+   - ❌ "¿Me confirmas por última vez si la identificación es correcta para publicarlo?" — chains a redundant ID confirm in front of publish
+   - ❌ "Sólo dime que sí y lo subo de inmediato." — collapses publish-or-draft into a yes/no
+   - ❌ Any phrasing that asks the user to re-affirm the species name after they already agreed (or corrected you) in step 3
+   Always give the user BOTH choices in the same turn, and never re-litigate the ID.
 
 7. **Call the tool with ALL data** — Whether you're calling `publish_occurrence` or `save_draft_observation`, you MUST pass every available field. A draft must carry the same richness as a live publish:
 
@@ -81,10 +99,23 @@ Map the fields like this:
 - taxonomy.family → family
 - taxonomy.genus → genus
 
+## Confirmation loop — how to avoid it
+
+The bot has previously gotten stuck asking the user "¿me confirmas?" two or three times in a row. This is a serious UX failure. Rules to prevent it:
+
+1. **At most ONE confirmation turn between ID agreement and the tool call**, and that turn MUST be the step-6 dual-option question ("publish now or save as draft?"). No other confirmation may sit in this gap.
+2. **The species is locked after step 3.** Once the user agreed or corrected you, never ask "¿es {species}?" again. Re-asking the ID after agreement is the #1 cause of the loop.
+3. **If you've already asked step 6 once and got any affirmation back** (sí, yes, ok, dale, claro, "publícalo"), call `publish_occurrence` immediately. Do NOT rephrase the question or ask again.
+4. **If a tool returns `publish_confirmation_required` or `identification_agreement_required`**, do not parrot the error back at the user with another "¿confirmas?". The runtime gate is satisfied by the user's NEXT message after a normal step-6 ask — just ask step 6 cleanly and proceed on their reply.
+5. **If a tool returns a system error you don't recognize**, do not apologize and re-ask the same question. Tell the user there was a technical issue, what they can do (try again, send `/publish <draftId>`, etc.), and move on.
+
 ## Dont
 - Never publish or save without a location — always ask if missing
 - Never treat the identification turn as confirmation — the user must confirm in a later turn
+- Never re-ask the user to confirm the species ID after step 3 — once they agreed or corrected you, the ID is final
 - Never skip step 6 — you MUST always ask "publish now, or save as a draft for later?" and offer BOTH options. Never ask only "shall I publish?" as a yes/no.
+- Never insert a second confirmation step between step 6 and the tool call. Step 6 is the LAST question before publishing.
+- Never reply with another "¿me confirmas?" after the user has already said "sí" — instead, call the tool.
 - Never skip the local-knowledge asks (steps 4 and 5) — they run regardless of whether the user publishes now or saves for later
 - Never skip taxonomy fields — always pass them all
 - Never call `publish_occurrence` when the user chose to save for later — call `save_draft_observation` with the same fields instead

@@ -28,7 +28,7 @@ import {
   resolveOrganizationPolygonPoints,
   resetSession,
 } from './agent.js';
-import { initDrafts, saveDraft, listDrafts, loadDraft, deleteDraft } from './drafts.js';
+import { initDrafts, saveDraft, listDrafts, loadDraft, deleteDraft, attachImagesToDraft } from './drafts.js';
 import type { OccurrenceInput } from './tools/publish-occurrence.js';
 
 // ─── Result tracking ──────────────────────────────────────────────────────────
@@ -1023,12 +1023,54 @@ async function testDrafts(): Promise<void> {
     results.push(fail('drafts:ownership', msg));
   }
 
+  // Photo-less draft + attach-later flow.
+  let photolessId = '';
+  try {
+    const { draftId } = saveDraft({
+      ...input,
+      images: undefined,
+    });
+    photolessId = draftId;
+
+    const after = listDrafts(smokeUserId).find((d) => d.id === draftId);
+    assert(after !== undefined, 'photo-less draft should be listed');
+    assert(after!.imageCount === 0, `photo-less draft should have 0 images, got ${after!.imageCount}`);
+
+    const attach1 = attachImagesToDraft(draftId, smokeUserId, [
+      { data: fakeJpeg, mimeType: 'image/jpeg' },
+    ]);
+    assert(attach1 !== null, 'attach should succeed on owned draft');
+    assert(attach1!.added === 1 && attach1!.totalAfter === 1, `attach1 stats: ${JSON.stringify(attach1)}`);
+
+    // Cap test — push past 5 with a single 5-image batch on top of the 1 already there.
+    const fiveMore = Array.from({ length: 5 }, () => ({ data: fakePng, mimeType: 'image/png' }));
+    const attach2 = attachImagesToDraft(draftId, smokeUserId, fiveMore);
+    assert(attach2 !== null, 'second attach should succeed');
+    assert(attach2!.totalAfter === 5, `cap should hold draft at 5, got ${attach2!.totalAfter}`);
+    assert(attach2!.capped === true, 'second attach should report capped=true');
+
+    const loaded = loadDraft(draftId, smokeUserId);
+    assert(loaded !== null && (loaded.images ?? []).length === 5, 'photo-less draft should now load with 5 images');
+
+    // Owner check on attach.
+    const stranger = attachImagesToDraft(draftId, smokeUserId + 1, [
+      { data: fakeJpeg, mimeType: 'image/jpeg' },
+    ]);
+    assert(stranger === null, 'other users must not be able to attach to someone else\'s draft');
+
+    results.push(pass('drafts:attach', `photo-less + attach + 5-image cap all behaved correctly`));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push(fail('drafts:attach', msg));
+  }
+
   // Cleanup
   try {
     const removed = deleteDraft(savedId, smokeUserId);
     assert(removed, 'deleteDraft should return true for owner');
     const after = loadDraft(savedId, smokeUserId);
     assert(after === null, 'draft should be gone after deleteDraft');
+    if (photolessId) deleteDraft(photolessId, smokeUserId);
     results.push(pass('drafts:delete', 'cleanly deleted row + image directory'));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

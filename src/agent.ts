@@ -14,7 +14,7 @@ import { loadEnvConfig, type EnvConfig } from "./env.js";
 import type { IncomingMessage } from "./telegram.js";
 import { identifySpecies } from "./tools/identify-species.js";
 import { publishOccurrence, type TelegramUser } from "./tools/publish-occurrence.js";
-import { saveDraft, listDrafts, loadDraft, deleteDraft } from "./drafts.js";
+import { saveDraft, listDrafts, loadDraft, deleteDraft, attachImagesToDraft } from "./drafts.js";
 import { publishMeasurement } from "./tools/publish-measurement.js";
 import { geocodeLocation } from "./tools/geocode-location.js";
 import { createGeostore, getTreeCoverExtent, getTreeCoverLoss, getFireAlerts, getDeforestationAlerts, reverseGeocodeAdmin } from "./tools/gfw-api.js";
@@ -187,18 +187,39 @@ export function clearOrganizationPolygonPoints(userId: number): void {
   }
 }
 
+// Action verbs that unambiguously mean "publish/save this now" — does NOT
+// include bare affirmations like "sí" or "ok". Used to bootstrap the agreement
+// flag when the user gives a clear publish command in a single turn (e.g.
+// "publiquemos!", "súbelo", "publícalo"). Critically, this must match Spanish
+// verb conjugations beyond the infinitive — earlier versions only matched
+// `publicar` literally and missed "Publiquemos!" which caused the bot to loop.
+function isExplicitPublishIntent(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) return false;
+  return (
+    /\b(publish\w*|upload\w*|post(\s+it)?)\b/i.test(normalized) ||
+    /\b(publica\w*|p[uú]blica\w*|publiqu\w*)\b/i.test(normalized) ||
+    /\b(sube|s[uú]bel[oa]|subir|subirl[oa])\b/i.test(normalized) ||
+    /\b(env[ií]a\w*|enviar)\b/i.test(normalized) ||
+    /\b(guarda\w*|guardar|salv[ao]\w*|salvar)\b/i.test(normalized) ||
+    /\b(go ahead|do it|send it|save it|record it)\b/i.test(normalized)
+  );
+}
+
 function isExplicitPublishConfirmation(text: string): boolean {
   const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) {
     return false;
   }
 
-  if (/^(yes|yeah|yep|sure|ok|okay|please|go ahead|do it)$/i.test(normalized)) {
+  // Bare affirmations — only count as publish-confirm when there's a prior
+  // agreement (the dispatcher in sendToAgent enforces that).
+  if (/^(yes|yeah|yep|sure|ok|okay|please|s[íi]|claro|dale|por favor|sim|pode)\s*[!.?]*$/i.test(normalized)) {
     return true;
   }
 
-  return /\b(publish|record|save)( this| it| the observation| the record)?\b/i.test(normalized) ||
-    /\bgo ahead\b/i.test(normalized);
+  // Strong action verbs always count.
+  return isExplicitPublishIntent(normalized);
 }
 
 function isExplicitIdentificationAgreement(text: string): boolean {
@@ -207,7 +228,7 @@ function isExplicitIdentificationAgreement(text: string): boolean {
     return false;
   }
 
-  return /\b(sounds? right|looks? right|seems? right|that'?s right|that'?s it|correct|exactly|yep|yeah|yes)\b/i.test(normalized) ||
+  return /\b(sounds? right|looks? right|seems? right|that'?s right|that'?s it|correct|exactly|yep|yeah|yes|s[íi]|claro|por supuesto|sim|isso)\b/i.test(normalized) ||
     /\b(it'?s|it is) (right|correct|good)\b/i.test(normalized);
 }
 
@@ -479,6 +500,10 @@ const discardDraftSchema = Type.Object({
   draftId: Type.String({ description: "The ID of the draft to discard (from list_drafts)" }),
 });
 
+const attachImageToDraftSchema = Type.Object({
+  draftId: Type.String({ description: "The ID of the draft to attach the current photo(s) to (from list_drafts)" }),
+});
+
 /**
  * Build the three custom tools for a given session state reference.
  * The state reference is a mutable object so tools always see the latest photo/user.
@@ -609,7 +634,11 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         };
       }
 
-      if (!latestConfirmationTurnId || latestConfirmationTurnId <= latestIdentificationAgreementTurnId) {
+      // Non-strict: a single user message with a strong publish verb
+      // (e.g. "publiquemos!") bootstraps agreement + publish-confirm on the
+      // same turn and both gates should open. The strict > agreement-gate
+      // above still protects against publishing on the same turn as the photo.
+      if (!latestConfirmationTurnId || latestConfirmationTurnId < latestIdentificationAgreementTurnId) {
         return {
           content: [
             {
@@ -1212,7 +1241,8 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     description:
       "Save a biodiversity occurrence locally instead of publishing it now. " +
       "Use when the user wants to upload later (offline fieldwork, deferring the decision). " +
-      "Same parameters as publish_occurrence. The user can flush drafts later with /publish or by asking Tainá.",
+      "Same parameters as publish_occurrence. May be called with ZERO photos in state — the user can attach a picture later via attach_image_to_draft before publishing. " +
+      "The user can flush drafts later with /publish or by asking Tainá.",
     parameters: publishOccurrenceSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       const photos = stateRef.state.photos;
@@ -1228,34 +1258,38 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       const latestIdentificationTurnId = stateRef.state.latestIdentificationTurnId ?? 0;
       const latestIdentificationAgreementTurnId = stateRef.state.latestIdentificationAgreementTurnId ?? 0;
 
-      if (!latestIdentificationTurnId) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({
-              success: false,
-              error: "Identification required before saving a draft",
-              code: "identification_required",
-              suggestion: "Identify the species first, then ask whether the ID sounds right before saving.",
-            }),
-          }],
-          details: {},
-        };
-      }
+      // Photo-less drafts skip the identification gate — the user types the
+      // scientific name and attaches a picture later via attach_image_to_draft.
+      if (photos.length > 0) {
+        if (!latestIdentificationTurnId) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                success: false,
+                error: "Identification required before saving a draft",
+                code: "identification_required",
+                suggestion: "Identify the species first, then ask whether the ID sounds right before saving.",
+              }),
+            }],
+            details: {},
+          };
+        }
 
-      if (!latestIdentificationAgreementTurnId || latestIdentificationAgreementTurnId <= latestIdentificationTurnId) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({
-              success: false,
-              error: "Identification agreement required",
-              code: "identification_agreement_required",
-              suggestion: "Ask whether the identification sounds right before saving.",
-            }),
-          }],
-          details: {},
-        };
+        if (!latestIdentificationAgreementTurnId || latestIdentificationAgreementTurnId <= latestIdentificationTurnId) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                success: false,
+                error: "Identification agreement required",
+                code: "identification_agreement_required",
+                suggestion: "Ask whether the identification sounds right before saving.",
+              }),
+            }],
+            details: {},
+          };
+        }
       }
 
       try {
@@ -1297,7 +1331,10 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
               scientificName: params.scientificName,
               vernacularName: params.vernacularName,
               imageCount: photos.length,
-              hint: "Tell the user the observation is saved and can be published later with /publish " + draftId + " or by asking you to upload it.",
+              hint:
+                photos.length === 0
+                  ? "Draft saved with NO photo. Tell the user they must attach a picture before publishing — they can send a photo and ask you to attach it to this draft, or use /attach " + draftId + "."
+                  : "Tell the user the observation is saved and can be published later with /publish " + draftId + " or by asking you to upload it.",
             }),
           }],
           details: {},
@@ -1379,6 +1416,21 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         };
       }
 
+      if (!input.images || input.images.length === 0) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              error: "Draft has no photo — cannot publish",
+              code: "draft_missing_image",
+              suggestion: "Tell the user this draft has no picture yet. They must send a photo and attach it (attach_image_to_draft) before publishing.",
+            }),
+          }],
+          details: {},
+        };
+      }
+
       const result = await publishOccurrence(input);
       if (result.success) {
         deleteDraft(params.draftId, user.id);
@@ -1428,6 +1480,77 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const attachImageToDraftTool: ToolDefinition<typeof attachImageToDraftSchema> = {
+    name: "attach_image_to_draft",
+    label: "Attach Image to Draft",
+    description:
+      "Attach the photo(s) the user just sent to an existing draft observation (so it can be published). " +
+      "Use when the user sends a picture and asks to add it to a specific draft (e.g. 'attach this to my Bougainvillea draft', 'add this picture to draft 97fded9f'). " +
+      "If they describe the draft instead of giving an ID, call list_drafts first to find the matching ID. " +
+      "Drafts cap at 5 images total — extra photos beyond the cap are dropped.",
+    parameters: attachImageToDraftSchema,
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const user = stateRef.state.currentUser;
+      if (!user) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No user context available" }) }],
+          details: {},
+        };
+      }
+
+      const photos = stateRef.state.photos;
+      if (photos.length === 0) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              error: "No photo to attach",
+              code: "no_photo",
+              suggestion: "Ask the user to send a photo first, then attach it to the draft.",
+            }),
+          }],
+          details: {},
+        };
+      }
+
+      const result = attachImagesToDraft(params.draftId, user.id, photos);
+      if (!result) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              error: "Draft not found or not owned by this user",
+              code: "draft_not_found",
+            }),
+          }],
+          details: {},
+        };
+      }
+
+      // Clear photos from session state once attached (mirrors publish/save flows).
+      stateRef.state.photos = [];
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            draftId: params.draftId,
+            added: result.added,
+            totalAfter: result.totalAfter,
+            capped: result.capped,
+            hint: result.capped
+              ? `Attached ${result.added} photo(s) — draft now has ${result.totalAfter}/5. Some photos were dropped because the draft hit the 5-image cap.`
+              : `Attached ${result.added} photo(s) — draft now has ${result.totalAfter}/5. The user can now publish it.`,
+          }),
+        }],
+        details: {},
+      };
+    },
+  };
+
   return [
     identifySpeciesTool as unknown as ToolDefinition,
     publishOccurrenceTool as unknown as ToolDefinition,
@@ -1449,6 +1572,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     listDraftsTool as unknown as ToolDefinition,
     publishDraftTool as unknown as ToolDefinition,
     discardDraftTool as unknown as ToolDefinition,
+    attachImageToDraftTool as unknown as ToolDefinition,
   ];
 }
 
@@ -1626,11 +1750,31 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   sessionState.currentTurnHasPhoto = Boolean(msg.photo);
   sessionState.currentTurnHasUserContext = hasMeaningfulUserContext(latestUserText);
 
-  if (latestUserText && isExplicitPublishConfirmation(latestUserText)) {
-    sessionState.latestPublishConfirmationTurnId = currentTurnId;
-  }
+  // Three matchers with overlap — resolve ambiguity at dispatch time:
+  //   - isStrongPublish: action verb ("publiquemos", "súbelo", "publish")
+  //   - isPublishConfirm: superset (also matches bare "sí"/"yes"/"ok")
+  //   - isAgreement: bare affirmation for ID confirmation step
+  // A bare "sí" matches both isPublishConfirm and isAgreement, so we route it
+  // based on what the bot was waiting for (inferred from prior agreement state).
+  // A strong publish verb bootstraps the agreement so the gate opens in one turn.
+  const priorAgreementTurnId = sessionState.latestIdentificationAgreementTurnId ?? 0;
+  const hasPriorAgreement = priorAgreementTurnId > 0 && priorAgreementTurnId < currentTurnId;
+  const isStrongPublish = latestUserText ? isExplicitPublishIntent(latestUserText) : false;
+  const isPublishConfirm = latestUserText ? isExplicitPublishConfirmation(latestUserText) : false;
+  const isAgreement = latestUserText ? isExplicitIdentificationAgreement(latestUserText) : false;
 
-  if (latestUserText && isExplicitIdentificationAgreement(latestUserText)) {
+  if (isStrongPublish) {
+    // Unambiguous action verb — user is asking to publish now. Bootstrap the
+    // agreement flag if not set, so the runtime gates can open in a single turn.
+    // The agreement gate (strict > identification turn) still blocks publish on
+    // the same turn as the photo, which is the original safety property.
+    if (!hasPriorAgreement) {
+      sessionState.latestIdentificationAgreementTurnId = currentTurnId;
+    }
+    sessionState.latestPublishConfirmationTurnId = currentTurnId;
+  } else if (isPublishConfirm && hasPriorAgreement) {
+    sessionState.latestPublishConfirmationTurnId = currentTurnId;
+  } else if (isAgreement) {
     sessionState.latestIdentificationAgreementTurnId = currentTurnId;
   }
 

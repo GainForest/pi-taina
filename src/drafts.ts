@@ -85,7 +85,7 @@ export function saveDraft(input: OccurrenceInput): { draftId: string } {
   fs.mkdirSync(draftImageDir, { recursive: true });
 
   const imagePaths: string[] = [];
-  const images = (input.images ?? []).slice(0, 5);
+  const images = (input.images ?? []).slice(0, MAX_DRAFT_IMAGES);
   for (let i = 0; i < images.length; i++) {
     const ext = mimeToExt(images[i].mimeType);
     const filePath = path.join(draftImageDir, `image-${i + 1}.${ext}`);
@@ -169,6 +169,64 @@ export function loadDraft(draftId: string, userId: number): OccurrenceInput | nu
     }));
 
   return { ...payload, images };
+}
+
+const MAX_DRAFT_IMAGES = 5;
+
+export interface AttachImagesResult {
+  added: number;
+  totalAfter: number;
+  capped: boolean;
+}
+
+export function attachImagesToDraft(
+  draftId: string,
+  userId: number,
+  images: Array<{ data: Buffer; mimeType: string }>,
+): AttachImagesResult | null {
+  const row = getDb()
+    .prepare(
+      `SELECT image_paths FROM drafts WHERE id = ? AND user_id = ?`,
+    )
+    .get(draftId, userId) as { image_paths: string } | undefined;
+
+  if (!row) return null;
+
+  const existing = JSON.parse(row.image_paths) as string[];
+  const remaining = Math.max(0, MAX_DRAFT_IMAGES - existing.length);
+  const toAdd = images.slice(0, remaining);
+  const capped = images.length > remaining;
+
+  if (toAdd.length === 0) {
+    return { added: 0, totalAfter: existing.length, capped };
+  }
+
+  const draftImageDir = path.join(IMAGES_DIR, draftId);
+  fs.mkdirSync(draftImageDir, { recursive: true });
+
+  const newPaths: string[] = [];
+  for (let i = 0; i < toAdd.length; i++) {
+    const ext = mimeToExt(toAdd[i].mimeType);
+    const index = existing.length + newPaths.length + 1;
+    const filePath = path.join(draftImageDir, `image-${index}.${ext}`);
+    fs.writeFileSync(filePath, toAdd[i].data);
+    newPaths.push(filePath);
+  }
+
+  const allPaths = [...existing, ...newPaths];
+  getDb()
+    .prepare(`UPDATE drafts SET image_paths = ? WHERE id = ? AND user_id = ?`)
+    .run(JSON.stringify(allPaths), draftId, userId);
+
+  return { added: newPaths.length, totalAfter: allPaths.length, capped };
+}
+
+export function getDraftImageCount(draftId: string, userId: number): number | null {
+  const row = getDb()
+    .prepare(`SELECT image_paths FROM drafts WHERE id = ? AND user_id = ?`)
+    .get(draftId, userId) as { image_paths: string } | undefined;
+  if (!row) return null;
+  return (JSON.parse(row.image_paths) as string[]).length;
 }
 
 export function deleteDraft(draftId: string, userId: number): boolean {

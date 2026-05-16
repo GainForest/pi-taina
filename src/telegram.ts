@@ -19,7 +19,7 @@ import {
   getPendingRequests, addMember, removeMember, getMembers, getAdmins 
 } from './whitelist.js';
 import { resetSession } from "./agent.js";
-import { listDrafts, loadDraft, deleteDraft } from "./drafts.js";
+import { listDrafts, loadDraft, deleteDraft, attachImagesToDraft } from "./drafts.js";
 import { publishOccurrence } from "./tools/publish-occurrence.js";
 
 // ─── Exported Types ──────────────────────────────────────────────────────────
@@ -573,7 +573,7 @@ export async function createTelegramBot(
           const imgs = d.imageCount > 0 ? ` · ${d.imageCount} 📸` : "";
           return `• <code>${d.id}</code>\n  ${escapeHtml(name)} — ${date}${imgs}`;
         });
-        const body = `📝 <b>Your saved drafts (${drafts.length})</b>\n\n${lines.join("\n\n")}\n\nPublish with <code>/publish &lt;id&gt;</code> or <code>/publish all</code>. Discard with <code>/discard &lt;id&gt;</code>.`;
+        const body = `📝 <b>Your saved drafts (${drafts.length})</b>\n\n${lines.join("\n\n")}\n\nPublish with <code>/publish &lt;id&gt;</code> or <code>/publish all</code>. Add a photo with a captioned <code>/attach &lt;id&gt;</code>. Discard with <code>/discard &lt;id&gt;</code>.`;
         await ctx.reply(body, { parse_mode: "HTML" });
         return;
       }
@@ -600,6 +600,13 @@ export async function createTelegramBot(
             await ctx.reply(`⚠️ Draft not found: <code>${escapeHtml(draftId)}</code>`, { parse_mode: "HTML" });
             continue;
           }
+          if (!input.images || input.images.length === 0) {
+            await ctx.reply(
+              `📸 Draft <code>${escapeHtml(draftId)}</code> has no photo yet — send one with caption <code>/attach ${escapeHtml(draftId)}</code> before publishing.`,
+              { parse_mode: "HTML" },
+            );
+            continue;
+          }
           try {
             const result = await publishOccurrence(input);
             if (result.success) {
@@ -616,6 +623,49 @@ export async function createTelegramBot(
             const message = err instanceof Error ? err.message : String(err);
             await ctx.reply(`❌ Error publishing <code>${escapeHtml(draftId)}</code>: ${escapeHtml(message)}`, { parse_mode: "HTML" });
           }
+        }
+        return;
+      }
+
+      if (commandName === "attach") {
+        const arg = rawTextForCommand.trim().split(/\s+/)[1];
+        if (!arg) {
+          await ctx.reply(
+            "Usage: send a photo with caption <code>/attach &lt;draft-id&gt;</code> to add the picture to that draft.",
+            { parse_mode: "HTML" },
+          );
+          return;
+        }
+        if (!msg.photo || msg.photo.length === 0) {
+          await ctx.reply(
+            "📸 Send the photo together with the <code>/attach &lt;draft-id&gt;</code> command as a caption.",
+            { parse_mode: "HTML" },
+          );
+          return;
+        }
+        try {
+          const largestPhoto = msg.photo[msg.photo.length - 1];
+          const photoData = await downloadTelegramFile(bot, largestPhoto.file_id, token);
+          const result = attachImagesToDraft(arg, user.id, [
+            { data: photoData, mimeType: "image/jpeg" },
+          ]);
+          if (!result) {
+            await ctx.reply(
+              `⚠️ Draft not found: <code>${escapeHtml(arg)}</code>`,
+              { parse_mode: "HTML" },
+            );
+            return;
+          }
+          const note = result.capped
+            ? ` Some photos were dropped — this draft is at the 5-image cap.`
+            : "";
+          await ctx.reply(
+            `📎 Attached. Draft <code>${escapeHtml(arg)}</code> now has ${result.totalAfter}/5 image(s).${note} Publish with <code>/publish ${escapeHtml(arg)}</code>.`,
+            { parse_mode: "HTML" },
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          await ctx.reply(`❌ Failed to attach photo: ${escapeHtml(message)}`);
         }
         return;
       }
