@@ -5,16 +5,38 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { loadEnvConfig } from "../env.js";
+import { getPublishingAgent, getPublishingDid } from "../atproto.js";
+import { reverseGeocode } from "./geocode-location.js";
 
 const execFileAsync = promisify(execFile);
 
 const AUDIOMOTH_WAV_PATTERN = /^\d{8}_\d{6}\.WAV$/i;
+const DEPLOYMENT_COLLECTION = "app.gainforest.ac.deployment";
+
+export interface DeploymentSummary {
+  uri: string;
+  rkey: string;
+  name: string;
+  deployedAt?: string;
+  decimalLatitude?: string;
+  decimalLongitude?: string;
+  deviceSerialNumber?: string;
+  locality?: string;
+  country?: string;
+  hasLocation: boolean;
+}
+
+export interface LocationInput {
+  decimalLatitude: number | string;
+  decimalLongitude: number | string;
+  altitude?: number | string;
+}
 
 // Resolve the audiogoat binary for the current platform/arch.
 // Falls back to 'audiogoat' on PATH if the bundled binary is missing.
 function resolveAudiogoatBinary(): string {
-  const platform = os.platform(); // 'darwin' | 'linux'
-  const arch = os.arch();         // 'arm64' | 'x64'
+  const platform = os.platform();
+  const arch = os.arch();
   const bundled = path.join(process.cwd(), "lib", `audiogoat-${platform}-${arch}`);
   try {
     accessSync(bundled, constants.X_OK);
@@ -34,58 +56,6 @@ function buildAudiogoatEnv(): NodeJS.ProcessEnv {
     ATP_PDS_HOST: config.atprotoService !== "https://bsky.social" ? config.atprotoService : "",
     LOG_LEVEL: "warn",
   };
-}
-
-// Parse the DID from the cached audiogoat session file.
-async function readAudiogoatDID(): Promise<string | null> {
-  let stateDir = path.join(os.homedir(), ".local", "state", "audiogoat");
-  if (process.platform === "darwin") {
-    stateDir = path.join(os.homedir(), "Library", "Application Support", "audiogoat");
-  } else if (process.platform === "win32") {
-    stateDir = path.join(process.env.APPDATA || os.homedir(), "audiogoat", "data");
-  }
-  const sessionFile = path.join(stateDir, "auth-session.json");
-  try {
-    const raw = await fs.readFile(sessionFile, "utf-8");
-    const parsed = JSON.parse(raw) as { did?: string };
-    return parsed.did ?? null;
-  } catch {
-    return null;
-  }
-}
-
-// Run `audiogoat deployment list` and return parsed entries.
-async function listDeployments(
-  binary: string,
-  env: NodeJS.ProcessEnv
-): Promise<Array<{ uri: string; name: string }>> {
-  let stdout = "";
-  try {
-    const r = await execFileAsync(binary, ["deployment", "list"], { env, timeout: 30_000 });
-    stdout = r.stdout;
-    console.log("audiogoat stdout:", stdout);
-  } catch (err: any) {
-    stdout = err.stdout ?? "";
-    console.log("audiogoat error stdout:", stdout, "error:", err);
-  }
-
-  if (stdout.includes("(no deployments found)")) return [];
-
-  // Output format: rkey  NAME  DEVICE  DEPLOYED  ...  (columns separated by 2+ spaces)
-  const did = await readAudiogoatDID();
-  if (!did) return [];
-
-  return stdout
-    .split("\n")
-    .slice(2) // skip header + separator lines
-    .map((line) => {
-      const cols = line.trim().split(/\s{2,}/);
-      const rkey = cols[0]?.trim();
-      const name = cols[1]?.trim() ?? "";
-      if (!rkey || rkey === "--") return null;
-      return { uri: `at://${did}/app.gainforest.ac.deployment/${rkey}`, name };
-    })
-    .filter((d): d is { uri: string; name: string } => d !== null && d.uri.length > 10);
 }
 
 // Extract AudioMoth metadata from the first WAV file in folder using ffprobe.
@@ -116,7 +86,6 @@ async function extractWavMeta(
 
     const deploymentMatch = comment.match(/deployment\s+([0-9a-f]+)/i);
     const deviceMatch = artist.match(/AudioMoth\s+([0-9A-Fa-f]+)/i) ?? comment.match(/AudioMoth\s+([0-9A-Fa-f]+)/i);
-    // Parse timestamp from filename: YYYYMMDD_HHMMSS.WAV
     const tsMatch = wav.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.WAV$/i);
     const recordedAt = tsMatch
       ? `${tsMatch[1]}-${tsMatch[2]}-${tsMatch[3]}T${tsMatch[4]}:${tsMatch[5]}:${tsMatch[6]}Z`
@@ -132,47 +101,180 @@ async function extractWavMeta(
   }
 }
 
-// Auto-create a deployment record using WAV metadata.
-// Stores the AudioMoth deployment ID in --serial so future ingests auto-match.
-async function autoCreateDeployment(
-  binary: string,
-  env: NodeJS.ProcessEnv,
-  folder: string
-): Promise<string | null> {
-  const meta = await extractWavMeta(folder);
-  const name = meta ? `AudioMoth ${meta.deviceId}` : "AudioMoth (auto)";
-  const serial = meta?.deploymentId || "unknown";
-  const deployedAt = meta?.recordedAt ?? new Date().toISOString();
+// List deployments via ATProto repo.listRecords — gives us full records
+// (lat/lon, deployedAt, serial) instead of having to parse CLI text.
+async function listDeploymentsViaAtproto(): Promise<DeploymentSummary[]> {
+  const config = loadEnvConfig();
+  const agent = await getPublishingAgent(config);
+  const did = getPublishingDid();
+
+  const result = await agent.com.atproto.repo.listRecords({
+    repo: did,
+    collection: DEPLOYMENT_COLLECTION,
+    limit: 100,
+  });
+
+  return result.data.records.map((r) => {
+    const v = r.value as Record<string, unknown>;
+    const rkey = r.uri.split("/").pop() ?? "";
+    const lat = typeof v.decimalLatitude === "string" ? v.decimalLatitude : undefined;
+    const lon = typeof v.decimalLongitude === "string" ? v.decimalLongitude : undefined;
+    return {
+      uri: r.uri,
+      rkey,
+      name: typeof v.name === "string" ? v.name : "AudioMoth deployment",
+      deployedAt: typeof v.deployedAt === "string" ? v.deployedAt : undefined,
+      decimalLatitude: lat,
+      decimalLongitude: lon,
+      deviceSerialNumber: typeof v.deviceSerialNumber === "string" ? v.deviceSerialNumber : undefined,
+      hasLocation: Boolean(lat && lon),
+    };
+  });
+}
+
+// Patch lat/lon onto an existing deployment record using putRecord.
+// Preserves all other fields (fetched first, then mutated).
+export async function patchDeploymentLocation(
+  uri: string,
+  location: LocationInput,
+): Promise<{ success: true } | { success: false; error: string }> {
+  const config = loadEnvConfig();
+  const agent = await getPublishingAgent(config);
+
+  const parts = uri.replace(/^at:\/\//, "").split("/");
+  if (parts.length !== 3 || parts[1] !== DEPLOYMENT_COLLECTION) {
+    return { success: false, error: `Invalid deployment URI: ${uri}` };
+  }
+  const [repo, collection, rkey] = parts;
+
+  let existing: Record<string, unknown>;
+  try {
+    const res = await agent.com.atproto.repo.getRecord({ repo, collection, rkey });
+    existing = res.data.value as Record<string, unknown>;
+  } catch (err) {
+    return { success: false, error: `Failed to fetch deployment: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const updated: Record<string, unknown> = {
+    ...existing,
+    decimalLatitude: String(location.decimalLatitude),
+    decimalLongitude: String(location.decimalLongitude),
+  };
+  if (location.altitude !== undefined) {
+    updated.altitude = String(location.altitude);
+  }
+
+  try {
+    await agent.com.atproto.repo.putRecord({
+      repo,
+      collection,
+      rkey,
+      record: updated,
+    });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: `Failed to patch deployment: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
+// Create an AudioMoth deployment record on ATProto with location.
+// Reverse-geocodes lat/lon for a friendly name. Used both by:
+//   - chime-time registration (no SD folder yet, deployment ID known from chime)
+//   - auto-create during upload when no matching deployment exists
+export async function createAudioMothDeployment(input: {
+  deploymentId: string;
+  location: LocationInput;
+  deployedAt?: string;
+  deviceLabel?: string;
+}): Promise<{ uri: string; name: string } | { error: string }> {
+  const binary = resolveAudiogoatBinary();
+  const env = buildAudiogoatEnv();
+
+  const lat = typeof input.location.decimalLatitude === "number"
+    ? input.location.decimalLatitude
+    : parseFloat(String(input.location.decimalLatitude));
+  const lon = typeof input.location.decimalLongitude === "number"
+    ? input.location.decimalLongitude
+    : parseFloat(String(input.location.decimalLongitude));
+
+  let locality: string | undefined;
+  if (!isNaN(lat) && !isNaN(lon)) {
+    try {
+      const rev = await reverseGeocode(lat, lon);
+      if (rev.success) locality = rev.locality ?? rev.country;
+    } catch {
+      // best-effort; deployment still created
+    }
+  }
+
+  const devicePart = input.deviceLabel ? ` ${input.deviceLabel}` : "";
+  const name = locality
+    ? `AudioMoth${devicePart} at ${locality}`
+    : `AudioMoth${devicePart} at ${input.location.decimalLatitude},${input.location.decimalLongitude}`;
 
   const args = [
     "deployment", "create",
     "--name", name,
     "--device", "AudioMoth",
-    "--serial", serial,
-    "--deployed-at", deployedAt,
+    "--serial", input.deploymentId,
+    "--deployed-at", input.deployedAt ?? new Date().toISOString(),
+    "--lat", String(input.location.decimalLatitude),
+    "--lon", String(input.location.decimalLongitude),
   ];
+  if (input.location.altitude !== undefined) {
+    args.push("--altitude", String(input.location.altitude));
+  }
 
   try {
     const { stdout } = await execFileAsync(binary, args, { env, timeout: 30_000 });
-    // Output: "Created deployment: at://did:.../app.gainforest.ac.deployment/rkey"
     const match = stdout.match(/at:\/\/[^\s]+/);
-    return match?.[0] ?? null;
-  } catch {
-    return null;
+    if (!match) return { error: `audiogoat returned no AT-URI; stdout: ${stdout.slice(0, 200)}` };
+    return { uri: match[0], name };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+// Thin wrapper for the upload flow: extracts deployment ID + timestamp from
+// the SD card's WAV metadata, then delegates to createAudioMothDeployment.
+async function autoCreateDeployment(
+  _binary: string,
+  _env: NodeJS.ProcessEnv,
+  folder: string,
+  location: LocationInput,
+): Promise<{ uri: string; name: string } | null> {
+  const meta = await extractWavMeta(folder);
+  const result = await createAudioMothDeployment({
+    deploymentId: meta?.deploymentId || "unknown",
+    deployedAt: meta?.recordedAt,
+    deviceLabel: meta?.deviceId && meta.deviceId !== "unknown" ? meta.deviceId : undefined,
+    location,
+  });
+  return "uri" in result ? result : null;
 }
 
 export interface IngestResult {
   success: true;
   uploaded: number;
   skipped: number;
+  deploymentUri: string;
+  deploymentName: string;
   output: string;
 }
 
 export interface IngestDeploymentChoiceNeeded {
   success: false;
   code: "deployment_choice_needed";
-  deployments: Array<{ uri: string; name: string }>;
+  deployments: DeploymentSummary[];
+  suggestion: string;
+}
+
+export interface IngestLocationRequired {
+  success: false;
+  code: "location_required";
+  reason: "no_deployment" | "deployment_missing_location";
+  deploymentUri?: string;
+  deploymentName?: string;
   suggestion: string;
 }
 
@@ -182,47 +284,151 @@ export interface IngestError {
   error: string;
 }
 
-export type UploadAudioMothResult = IngestResult | IngestDeploymentChoiceNeeded | IngestError;
+export type UploadAudioMothResult =
+  | IngestResult
+  | IngestDeploymentChoiceNeeded
+  | IngestLocationRequired
+  | IngestError;
 
 export async function uploadAudioMothSD(
   folder: string,
-  deploymentUri?: string
+  deploymentUri?: string,
+  location?: LocationInput,
 ): Promise<UploadAudioMothResult> {
   const binary = resolveAudiogoatBinary();
   const env = buildAudiogoatEnv();
 
-  let resolvedDeploymentUri = deploymentUri;
+  let resolvedDeployment: { uri: string; name: string; hasLocation: boolean } | null = null;
 
-  if (!resolvedDeploymentUri) {
-    const deployments = await listDeployments(binary, env);
-    console.log("Found deployments:", deployments);
+  // Path 1: caller already chose a specific deployment URI (from a previous
+  // disambiguation turn). Honor it.
+  if (deploymentUri) {
+    let summaries: DeploymentSummary[];
+    try {
+      summaries = await listDeploymentsViaAtproto();
+    } catch (err) {
+      return { success: false, code: "error", error: `Failed to list deployments: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const match = summaries.find((d) => d.uri === deploymentUri);
+    if (!match) {
+      return { success: false, code: "error", error: `Deployment ${deploymentUri} not found in current account.` };
+    }
+    if (!match.hasLocation) {
+      // Caller may have passed a location to patch it. If not, ask.
+      if (!location) {
+        return {
+          success: false,
+          code: "location_required",
+          reason: "deployment_missing_location",
+          deploymentUri: match.uri,
+          deploymentName: match.name,
+          suggestion: `Deployment "${match.name}" has no GPS coordinates yet. Ask the user where the AudioMoth is placed (Telegram location, place name, or coordinates), then call upload_audiomoth_sd again with the same deploymentUri plus location.`,
+        };
+      }
+      const patch = await patchDeploymentLocation(match.uri, location);
+      if (!patch.success) {
+        return { success: false, code: "error", error: patch.error };
+      }
+    }
+    resolvedDeployment = { uri: match.uri, name: match.name, hasLocation: true };
+  }
 
-    if (deployments.length === 0) {
-      const created = await autoCreateDeployment(binary, env, folder);
+  // Path 2: no URI provided — auto-resolve from the existing deployment set.
+  if (!resolvedDeployment) {
+    let deployments: DeploymentSummary[];
+    try {
+      deployments = await listDeploymentsViaAtproto();
+    } catch (err) {
+      return { success: false, code: "error", error: `Failed to list deployments: ${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    // Serial-based auto-match: if the WAV metadata embeds a deployment ID
+    // that matches an existing deployment's deviceSerialNumber, use it
+    // silently. This is the path the field-registered chime flow lands on:
+    // the user already created the deployment via the chime tool, so we
+    // never need to ask them for location during upload.
+    const wavMeta = await extractWavMeta(folder);
+    const wavSerial = wavMeta?.deploymentId;
+    if (wavSerial) {
+      const match = deployments.find((d) => d.deviceSerialNumber === wavSerial);
+      if (match) {
+        if (!match.hasLocation) {
+          if (!location) {
+            return {
+              success: false,
+              code: "location_required",
+              reason: "deployment_missing_location",
+              deploymentUri: match.uri,
+              deploymentName: match.name,
+              suggestion: `Deployment "${match.name}" matches this SD card by serial but has no GPS coordinates yet. Ask the user where the AudioMoth is placed, then call upload_audiomoth_sd again with the same deploymentUri plus location.`,
+            };
+          }
+          const patch = await patchDeploymentLocation(match.uri, location);
+          if (!patch.success) {
+            return { success: false, code: "error", error: patch.error };
+          }
+        }
+        resolvedDeployment = { uri: match.uri, name: match.name, hasLocation: true };
+        // Skip the count-based branching below — we resolved by serial.
+        deployments = []; // not used after this point on this branch
+      }
+    }
+
+    if (resolvedDeployment) {
+      // fall through to the ingest call below
+    } else if (deployments.length === 0) {
+      // No existing deployments — must create one. Requires location.
+      if (!location) {
+        return {
+          success: false,
+          code: "location_required",
+          reason: "no_deployment",
+          suggestion: "No AudioMoth deployment exists yet. Ask the user where this AudioMoth is placed (Telegram location, place name, or coordinates), then call upload_audiomoth_sd again with location.",
+        };
+      }
+      const created = await autoCreateDeployment(binary, env, folder, location);
       if (!created) {
         return {
           success: false,
           code: "error",
-          error: "No deployments found and failed to auto-create one. Make sure ATProto credentials are configured.",
+          error: "Failed to create deployment. Make sure ATProto credentials are configured and audiogoat is logged in.",
         };
       }
-      resolvedDeploymentUri = created;
+      resolvedDeployment = { uri: created.uri, name: created.name, hasLocation: true };
     } else if (deployments.length === 1) {
-      resolvedDeploymentUri = deployments[0].uri;
+      const only = deployments[0];
+      if (!only.hasLocation) {
+        if (!location) {
+          return {
+            success: false,
+            code: "location_required",
+            reason: "deployment_missing_location",
+            deploymentUri: only.uri,
+            deploymentName: only.name,
+            suggestion: `Deployment "${only.name}" has no GPS coordinates yet. Ask the user where the AudioMoth is placed, then call upload_audiomoth_sd again with the same deploymentUri plus location.`,
+          };
+        }
+        const patch = await patchDeploymentLocation(only.uri, location);
+        if (!patch.success) {
+          return { success: false, code: "error", error: patch.error };
+        }
+      }
+      resolvedDeployment = { uri: only.uri, name: only.name, hasLocation: true };
     } else {
       return {
         success: false,
         code: "deployment_choice_needed",
         deployments,
-        suggestion: "Multiple recorder deployments found. Ask the user which deployment this SD card belongs to, then call upload_audiomoth_sd again with the chosen deploymentUri.",
+        suggestion: "Multiple AudioMoth deployments found. Show the user the list (name, locality if available, deployedAt) and ask which one this SD card belongs to. Then call upload_audiomoth_sd again with the chosen deploymentUri.",
       };
     }
   }
 
+  // All resolution paths converge here with a deployment that has location.
   const args = [
     "ingest",
     "--folder", folder,
-    "--deployment", resolvedDeploymentUri,
+    "--deployment", resolvedDeployment.uri,
   ];
 
   let stdout = "";
@@ -230,7 +436,7 @@ export async function uploadAudioMothSD(
   try {
     ({ stdout, stderr } = await execFileAsync(binary, args, {
       env,
-      timeout: 15 * 60 * 1000, // 15 min for large SD cards
+      timeout: 15 * 60 * 1000,
     }));
   } catch (err: any) {
     stdout = err.stdout ?? "";
@@ -250,5 +456,12 @@ export async function uploadAudioMothSD(
   const processed = processedMatch ? parseInt(processedMatch[1]) : 0;
   const skipped = skippedMatch ? parseInt(skippedMatch[1]) : Math.max(0, processed - uploaded);
 
-  return { success: true, uploaded, skipped, output };
+  return {
+    success: true,
+    uploaded,
+    skipped,
+    deploymentUri: resolvedDeployment.uri,
+    deploymentName: resolvedDeployment.name,
+    output,
+  };
 }

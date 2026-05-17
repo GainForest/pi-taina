@@ -28,7 +28,7 @@ import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
 import { detectAudioMothSDCards } from './tools/detect-audiomoth-sd.js';
-import { uploadAudioMothSD } from './tools/ingest-audiomoth-sd.js';
+import { uploadAudioMothSD, createAudioMothDeployment } from './tools/ingest-audiomoth-sd.js';
 import {
   parsePolygonWebAppPayload,
   isLikelyPolygonPayloadText,
@@ -473,7 +473,10 @@ const detectAudioMothSDSchema = Type.Object({});
 
 const uploadAudioMothSDSchema = Type.Object({
   folder: Type.String({ description: "Absolute path to the SD card folder to ingest (from detect_audiomoth_sd result)" }),
-  deploymentUri: Type.Optional(Type.String({ description: "AT-URI of the deployment to associate recordings with. Only provide when the user has explicitly chosen from a list returned by a previous call." })),
+  deploymentUri: Type.Optional(Type.String({ description: "AT-URI of the deployment to associate recordings with. Only provide when the user has explicitly chosen from a list returned by a previous call, or to patch a deployment that lacked location." })),
+  decimalLatitude: Type.Optional(Type.Number({ description: "GPS latitude of the AudioMoth deployment location. Required when creating a new deployment OR patching one that lacks location. The AudioMoth has no GPS — the user must provide this." })),
+  decimalLongitude: Type.Optional(Type.Number({ description: "GPS longitude of the AudioMoth deployment location. Required when creating a new deployment OR patching one that lacks location." })),
+  altitude: Type.Optional(Type.Number({ description: "Optional altitude in meters above sea level." })),
 });
 
 const requestPolygonWebAppSchema = Type.Object({
@@ -985,7 +988,13 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
   const createHypercertTool: ToolDefinition<typeof createHypercertSchema> = {
     name: 'create_hypercert',
     label: 'Create Hypercert',
-    description: 'Create a hypercert (impact certificate) to record conservation or community work. Use when the user wants to document a project, initiative, or impact claim — not a species observation.',
+    description:
+      'Create a hypercert (impact certificate / "bumicert") to record conservation or community work. ' +
+      'Use when the user wants to document a project, initiative, or impact claim — not a species observation. ' +
+      'STRICT REQUIREMENTS: (1) at least one photo must be in state — the bumicert needs a visual identity; ' +
+      '(2) shortDescription MUST come from the user in their own words, NOT invented by you. ' +
+      'If no photo is in state, this tool returns code="photo_required" — ask the user for a photo and retry. ' +
+      'Never call this tool with a placeholder/auto-generated description.',
     parameters: createHypercertSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       const user = stateRef.state.currentUser;
@@ -993,6 +1002,22 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: 'No user context' }) }], details: {} };
       }
       const photos = stateRef.state.photos;
+      if (photos.length === 0) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              success: false,
+              code: 'photo_required',
+              error: 'A bumicert needs at least one photo as its visual identity.',
+              suggestion:
+                "Ask the user to send a photo of the project (the area, the team, the work, before/after). " +
+                "Wait for the photo, then call create_hypercert again. Do NOT proceed without a photo.",
+            }),
+          }],
+          details: {},
+        };
+      }
       const result = await createHypercert({
         title: params.title,
         shortDescription: params.shortDescription,
@@ -1072,7 +1097,11 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
   const generateChimeTool: ToolDefinition<typeof generateChimeSchema> = {
     name: 'generate_audiomoth_chime',
     label: 'Generate AudioMoth Chime',
-    description: 'Generate a WAV audio chime to configure an AudioMoth bioacoustic recorder. The chime encodes the current UTC timestamp, GPS coordinates, and a deployment ID. The user plays it near the AudioMoth microphone to sync the device. Use when the user mentions AudioMoth, wants to set up a recorder, or asks for a chime.',
+    description:
+      'Generate a WAV audio chime to configure an AudioMoth bioacoustic recorder. The chime encodes the current UTC timestamp, GPS coordinates, and a deployment ID. The user plays it near the AudioMoth microphone to sync the device. ' +
+      'IMPORTANT: this tool ALSO creates the deployment record on ATProto right away, using the same lat/lon. The response includes `deploymentUri` and `deploymentName` on success. When you reply to the user, tell them BOTH that the chime is ready AND that the deployment is already registered (link is auto-created later for the SD upload). ' +
+      'If the response has `deploymentRegistrationWarning`, the chime succeeded but ATProto creation failed — warn the user they will need to provide location again when uploading the SD card. ' +
+      'Use when the user mentions AudioMoth, wants to set up a recorder, or asks for a chime.',
     parameters: generateChimeSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       const { execFile } = await import('node:child_process');
@@ -1112,6 +1141,32 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
           caption: '🎵 AudioMoth configuration chime',
         };
 
+        // Register the deployment on ATProto right now, while we have location.
+        // This is the key fix for the "weeks later" UX problem: future SD uploads
+        // will auto-match by deviceSerialNumber=deploymentId and skip the
+        // location prompt entirely. Failures here don't block the chime (the
+        // user can still configure their AudioMoth) — we just warn the agent.
+        let deploymentUri: string | undefined;
+        let deploymentName: string | undefined;
+        let deploymentRegistrationWarning: string | undefined;
+        try {
+          const reg = await createAudioMothDeployment({
+            deploymentId,
+            location: {
+              decimalLatitude: params.latitude,
+              decimalLongitude: params.longitude,
+            },
+          });
+          if ("uri" in reg) {
+            deploymentUri = reg.uri;
+            deploymentName = reg.name;
+          } else {
+            deploymentRegistrationWarning = reg.error;
+          }
+        } catch (err) {
+          deploymentRegistrationWarning = err instanceof Error ? err.message : String(err);
+        }
+
         return {
           content: [{
             type: 'text' as const,
@@ -1120,7 +1175,17 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
               deploymentId,
               latitude: params.latitude,
               longitude: params.longitude,
-              message: 'Chime generated. The WAV file will be sent as an audio message. Tell the user to play it near their AudioMoth microphone.',
+              ...(deploymentUri ? { deploymentUri, deploymentName } : {}),
+              ...(deploymentRegistrationWarning
+                ? {
+                    deploymentRegistrationWarning,
+                    suggestion:
+                      "The chime was generated but the ATProto deployment record could not be created. Tell the user to remember the location — when they bring the SD card back, you'll need to ask them for it again.",
+                  }
+                : {}),
+              message: deploymentUri
+                ? "Chime generated and deployment registered on ATProto with location. The WAV file will be sent as an audio message — the user plays it near their AudioMoth microphone. When they later upload the SD card, the audio will auto-link to this deployment."
+                : "Chime generated. The WAV file will be sent as an audio message. Tell the user to play it near their AudioMoth microphone.",
               diagnostics: (stdout + stderr).trim(),
             }),
           }],
@@ -1224,10 +1289,24 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
   const uploadAudioMothSDTool: ToolDefinition<typeof uploadAudioMothSDSchema> = {
     name: "upload_audiomoth_sd",
     label: "Upload AudioMoth SD Card",
-    description: "Upload AudioMoth WAV recordings from a connected SD card to the community ATProto PDS. Converts to FLAC, deduplicates via SHA-1, and links to a recorder deployment. Only call after the user confirms they want to upload.",
+    description:
+      "Upload AudioMoth WAV recordings from a connected SD card to the community ATProto PDS. " +
+      "Converts to FLAC, deduplicates via SHA-1, and links to a recorder deployment. " +
+      "Only call after the user confirms they want to upload. " +
+      "The AudioMoth has no GPS — when this tool returns code='location_required', you MUST ask the user where the AudioMoth is placed (Telegram location, place name to geocode, or coordinates), then call again with decimalLatitude/decimalLongitude. " +
+      "When code='deployment_choice_needed', show the user the enriched list (name, locality, deployedAt) and call again with the chosen deploymentUri. " +
+      "Never invent coordinates and never call this tool without a user-confirmed location for the deployment.",
     parameters: uploadAudioMothSDSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
-      const result = await uploadAudioMothSD(params.folder, params.deploymentUri);
+      const location =
+        params.decimalLatitude !== undefined && params.decimalLongitude !== undefined
+          ? {
+              decimalLatitude: params.decimalLatitude,
+              decimalLongitude: params.decimalLongitude,
+              ...(params.altitude !== undefined ? { altitude: params.altitude } : {}),
+            }
+          : undefined;
+      const result = await uploadAudioMothSD(params.folder, params.deploymentUri, location);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
         details: {},

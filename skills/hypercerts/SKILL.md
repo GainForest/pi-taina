@@ -14,62 +14,50 @@ description: Create hypercerts (impact certificates) to document conservation pr
 - User wants to document ongoing or completed conservation work
 
 ## When NOT to Use
-- User sends a photo of a species → use identify_species + publish_occurrence instead
-- User asks about forest health → use forest_report instead
-- User just wants to search existing records → use query_hyperindex instead
+- User sends a photo of a species → use `identify_species` + `publish_occurrence` instead
+- User asks about forest health → use `forest_report` instead
+- User just wants to search existing records → use `query_hyperindex` instead
 
-## How to Use
-1. When the user describes a project, immediately extract what you can: title, description, dates, location
-2. If the user hasn't sent a photo yet, ALWAYS ask for one before creating:
-   - 'Send me a photo of the project! 📸 It could be the area, the team, or the work in progress — it'll be the face of your certificate.'
-   - Wait for the photo before proceeding
-3. Ask ONE more follow-up at most — prioritize what's missing:
-   - No dates? Ask: 'When did this start?' (don't ask for end date separately — assume ongoing if not mentioned)
-   - No location? Ask: 'Where did this happen?' then use geocode_location
-   - No work scope? Don't ask — infer from the description (e.g. reforestation → 'reforestation, habitat-restoration')
-4. Auto-fill as much as possible:
-   - startDate: extract from conversation or default to today
-   - workScope: infer tags from the description (biodiversity, reforestation, monitoring, community, etc.)
-   - contributors: auto-filled (the user + org if registered)
-   - location: use geocode_location if user mentions a place name
-5. Call create_hypercert with everything gathered — the photo is attached automatically from the accumulated photos
-6. Share the Hyperscan link
-7. Offer to attach observations as evidence
+## Required gates (MUST satisfy ALL before calling create_hypercert)
 
-## Photo
-A photo is the visual identity of the hypercert — it shows up on Hyperscan as the certificate image.
-- ALWAYS ask for a photo if the user hasn't sent one
-- Good photos: the project area, the team working, before/after shots, the community
-- The most recent photo in the conversation is used as the hypercert image
-- If the user really doesn't want to send a photo, proceed without one — but always ask first
+The runtime tool `create_hypercert` ENFORCES gate 1 and will return `code: "photo_required"` if violated. Gates 2 and 3 are your responsibility — the model is the only thing that can enforce them.
 
-## Auto-filled Fields
-These are filled automatically — you don't need to ask the user:
-- contributors: the submitting user is always added, plus the org if registered
-- createdAt: current timestamp
-- workScope: infer from description if not explicitly provided
-- image: the most recent photo sent in the conversation
+1. **Photo in state** — at least one photo must be in the conversation state. If the user hasn't sent one, ask:
+   > "📸 Mándame una foto del proyecto — del área, el equipo, o el trabajo en progreso. Va a ser la cara del bumicert."
+   Wait for the photo. Do NOT proceed without it. If you call the tool anyway, it returns `photo_required` and you'll have to ask anyway.
 
-Focus your questions on what ONLY the user can provide: title, dates, location, photo.
+2. **Title and shortDescription must come from the USER** — these are the two human-facing fields that define what the bumicert is *about*. **Never invent them silently.** Specifically:
+   - If the user said something like "publica esto como bumicert" without details, you do NOT have enough info. Ask:
+     > "¿Qué título le ponemos? ¿Y cómo describirías en una o dos frases el trabajo que estás documentando?"
+   - It's fine to *suggest* a title/description based on context (e.g. for an AudioMoth deployment: "podríamos llamarlo 'Monitoreo bioacústico en {locality}' — ¿te parece o prefieres otro?") — but the user must confirm or override. Don't just write your suggestion into the tool call.
+   - Don't ask both fields in two separate turns. Combine: "¿Título y un par de frases describiendo el trabajo?"
 
-## Linking Observations
-After creating a hypercert, ALWAYS offer to link the community's observations as evidence:
-- 'Want me to attach your community's biodiversity records as evidence? 📋'
-- If yes, call attach_observations with the hypercert URI and CID from the create_hypercert result
-- Optionally ask about a date range: 'Should I include all observations, or just from a specific period?'
-- After attaching, celebrate: '🏆 Your hypercert is now backed by X verified observations!'
-- Share both the hypercert and attachment Hyperscan links
+3. **One follow-up max for the remaining fields** — after photo + title + description are set, ask at most ONE follow-up to fill the most-missing field:
+   - No dates? → "¿Cuándo empezó esto?" (default ongoing if unsaid)
+   - No location? → "¿Dónde está el proyecto?" then `geocode_location`
+   - No work scope? → Don't ask. Infer from the description (reforestation → "reforestation, habitat-restoration").
 
-This is the most powerful flow — a hypercert backed by real, verifiable biodiversity data.
+## Auto-filled fields — DON'T ask the user
+- `contributors`: the submitting user + their org (if registered)
+- `createdAt`: now
+- `workScope`: inferred from the user-provided description
+- `image`: the most recent photo in state (the one you just asked for)
 
-## Presentation
-- Celebrate the creation: 'Your impact is now on the record! 🏆'
-- Share the Hyperscan URL so they can view and share it
-- Explain briefly: 'A hypercert is like a certificate for your conservation work — it's permanent and verifiable'
-- Don't overwhelm with technical details about ATProto or DIDs
+## After creating
+1. Share the Hyperscan link warmly: "🏆 Tu bumicert ya está en la red comunitaria: <link>"
+2. **Offer to link observations as evidence** — this is the highest-value follow-up:
+   > "¿Quieres que adjunte tus observaciones biodiversas como evidencia del trabajo?"
+   - If yes → `attach_observations` with the hypercert URI + CID from the create result.
+   - Optionally ask date range: "¿Todas las observaciones, o solo de un período?"
+3. After attaching, celebrate the link: "🌳 Tu bumicert ahora respaldado por X registros verificables."
 
 ## Don't
-- Don't create a hypercert for every species observation — those are occurrences
-- Don't create a hypercert without asking for a photo first
-- Don't ask more than 2 questions before creating — photo + one follow-up max
-- Don't require all fields — title, short description, and a photo are the essentials
+- **Don't** call `create_hypercert` without a photo. The runtime gate will block you — but you should have asked first anyway.
+- **Don't** invent the title or `shortDescription` from context. Suggest, get confirmation, then submit. The user's project is theirs to name.
+- **Don't** ask more than 2 questions before calling the tool: (photo + title/description) is the first turn, ONE follow-up is the second. Then create.
+- **Don't** mix this flow with a species observation — if the user just sent a photo of a frog, they want `publish_occurrence`, not a bumicert.
+- **Don't** add technical details about ATProto, DIDs, or CIDs to the user-facing reply. Keep it warm and human.
+
+## Common foot-guns from past sessions
+- **AudioMoth context**: when the user has just uploaded AudioMoth recordings and asks "puedes crear un bumicert con estas grabaciones?", that does NOT give you a photo or a confirmed title. Ask for both. The recordings are great EVIDENCE (link them via `attach_observations` after creating), but they aren't a substitute for the bumicert photo + description.
+- **"Just do it" pressure**: when the user is enthusiastic ("¡dale!"), don't skip the photo gate. The bumicert without a photo is a worse artifact than the one-extra-turn wait.

@@ -114,3 +114,62 @@ export async function geocodeLocation(
           : {}),
   };
 }
+
+export async function reverseGeocode(
+  latitude: number,
+  longitude: number,
+): Promise<GeocodeResponse> {
+  const params = new URLSearchParams({
+    lat: String(latitude),
+    lon: String(longitude),
+    format: "json",
+    addressdetails: "1",
+    zoom: "14",
+  });
+
+  const url = `https://nominatim.openstreetmap.org/reverse?${params.toString()}`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      headers: { "User-Agent": "Pi-Taina/1.0 (biodiversity-bot)" },
+    });
+  } catch (err) {
+    return { success: false, error: `Network error: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  if (!response.ok) {
+    return { success: false, error: `Nominatim HTTP ${response.status}: ${response.statusText}` };
+  }
+
+  let result: NominatimResult;
+  try {
+    result = (await response.json()) as NominatimResult;
+  } catch (err) {
+    return { success: false, error: `Failed to parse response: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  if (!result || !result.lat || !result.lon) {
+    return { success: false, error: `No address found for ${latitude},${longitude}` };
+  }
+
+  const addr = result.address ?? {};
+  const locality = addr.city ?? addr.town ?? addr.village ?? addr.municipality;
+
+  return {
+    success: true,
+    latitude,
+    longitude,
+    formattedAddress: result.display_name,
+    ...(locality !== undefined && { locality }),
+    ...(addr.country !== undefined && { country: addr.country }),
+    ...(addr.country_code !== undefined && { countryCode: addr.country_code.toUpperCase() }),
+    ...(addr.state !== undefined
+      ? { stateProvince: addr.state }
+      : addr.province !== undefined
+        ? { stateProvince: addr.province }
+        : addr.region !== undefined
+          ? { stateProvince: addr.region }
+          : {}),
+  };
+}
