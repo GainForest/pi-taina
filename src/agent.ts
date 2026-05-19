@@ -740,7 +740,13 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
               linkInstruction: `Your VERY NEXT reply MUST include this link verbatim so the user can see their observation: ${result.hyperscanUrl} — phrase it in the user's language (e.g. "👉 Ver tu observación: <a href=\\"${result.hyperscanUrl}\\">Hyperscan</a>"). Do not skip it, do not save it for later — surface it now.`,
               suggestMeasurements: true,
               measurementHint: "AFTER sharing the link, optionally ask the user if they want to add field measurements (height, trunk diameter, body mass, etc). Call publish_measurement if they say yes. Do not ask before the link — the link comes first.",
-            } : {}),
+            } : {
+              // Failed publish — make the failure non-retryable so the model
+              // doesn't loop on the same call. Previously we observed 5+
+              // retries per session when ATProto credentials were missing.
+              doNotRetry: true,
+              userMessageInstruction: `Publishing failed and CANNOT be retried in this turn. Apologize briefly to the user in their language, mention you couldn't save the record right now, and offer to save it as a draft instead via save_draft_observation (which doesn't need the registry). Do NOT call publish_occurrence again until the user clearly asks to retry. The underlying error was: ${result.error}`,
+            }),
           }),
         }],
         details: {},
@@ -1790,7 +1796,12 @@ export async function getOrCreateSession(userId: number, isAdmin: boolean = fals
     sessionManager: SessionManager.create(sessionDir),
     customTools,
     cwd: process.cwd(),
-    tools: isAdmin ? undefined : [],  // admin gets defaults (read,bash,edit,write), members get none
+    // No coding tools (read/bash/edit/write) in the Telegram chat context —
+    // even for admins. When publish_occurrence failed silently we observed
+    // the model inspecting its own source via bash/read to "debug" the
+    // tool, which is not what users came for. Coding tools belong in the
+    // pi-agent CLI use case, not the bot.
+    tools: [],
   });
 
   const sessionState: SessionState = {
