@@ -544,26 +544,13 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         };
       }
 
-      const isFreshPhotoOnlyMessage =
-        stateRef.state.currentTurnHasPhoto === true && stateRef.state.currentTurnHasUserContext !== true;
-
-      if (isFreshPhotoOnlyMessage) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                success: false,
-                error: "Community context required before identification",
-                code: "identify_context_required",
-                suggestion:
-                  "Ask the user what they already know, what they noticed, or any story/context about the organism, or ask permission to try the ID next.",
-              }),
-            },
-          ],
-          details: {},
-        };
-      }
+      // Previously this code path forced the model to ask the user "what
+      // do you already know?" before running identification, which added a
+      // useless turn for users who just want to know what their photo is.
+      // The 2026-05-19 Parque das Tribos session showed users sending a
+      // photo and then waiting through 3-4 prompts before getting an ID.
+      // Identify immediately; the local-knowledge ask (if needed) happens
+      // optionally near publish time, not as a precondition.
 
       const imageData = photo.data.toString("base64");
       let result;
@@ -631,9 +618,10 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       }
 
       const latestIdentificationTurnId = stateRef.state.latestIdentificationTurnId ?? 0;
-      const latestIdentificationAgreementTurnId = stateRef.state.latestIdentificationAgreementTurnId ?? 0;
-      const latestConfirmationTurnId = stateRef.state.latestPublishConfirmationTurnId ?? 0;
+      const currentTurnId = stateRef.state.currentTurnId ?? 0;
 
+      // ── Gate 1: identification must exist ────────────────────────────────
+      // Can't publish what we haven't identified.
       if (!latestIdentificationTurnId) {
         return {
           content: [
@@ -643,7 +631,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
                 success: false,
                 error: "Identification required before publishing",
                 code: "identification_required",
-                suggestion: "Identify the species first, then ask whether it sounds right before publishing.",
+                suggestion: "Call identify_species first, then publish on the user's next turn.",
               }),
             },
           ],
@@ -651,37 +639,26 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         };
       }
 
-      if (!latestIdentificationAgreementTurnId || latestIdentificationAgreementTurnId <= latestIdentificationTurnId) {
+      // ── Gate 2: not on the same turn as identification ───────────────────
+      // The only confirmation we strictly require: don't publish in the same
+      // user turn that produced the identification. This guards against the
+      // model auto-publishing immediately after a fresh ID without giving
+      // the user a chance to correct it. The user's NEXT turn (a location
+      // share, a "publica", a "sí", or anything at all) opens the gate.
+      //
+      // Previously we also required separate "agreement" and "confirmation"
+      // turns, which forced 2-3 extra prompts. Those were causing real
+      // abandonment in the Parque das Tribos sessions, so they're gone.
+      if (latestIdentificationTurnId >= currentTurnId) {
         return {
           content: [
             {
               type: "text" as const,
               text: JSON.stringify({
                 success: false,
-                error: "Identification agreement required",
-                code: "identification_agreement_required",
-                suggestion: "Ask whether the identification sounds right before publishing.",
-              }),
-            },
-          ],
-          details: {},
-        };
-      }
-
-      // Non-strict: a single user message with a strong publish verb
-      // (e.g. "publiquemos!") bootstraps agreement + publish-confirm on the
-      // same turn and both gates should open. The strict > agreement-gate
-      // above still protects against publishing on the same turn as the photo.
-      if (!latestConfirmationTurnId || latestConfirmationTurnId < latestIdentificationAgreementTurnId) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                success: false,
-                error: "Publish confirmation required",
-                code: "publish_confirmation_required",
-                suggestion: "Ask whether the user wants to publish the record in a later turn before calling publish_occurrence.",
+                error: "Wait for the user's next message before publishing",
+                code: "publish_too_soon",
+                suggestion: "You just identified the species this turn. Share the ID with the user and wait for their next reply (location, agreement, correction) before calling publish_occurrence.",
               }),
             },
           ],
@@ -1407,7 +1384,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       }
 
       const latestIdentificationTurnId = stateRef.state.latestIdentificationTurnId ?? 0;
-      const latestIdentificationAgreementTurnId = stateRef.state.latestIdentificationAgreementTurnId ?? 0;
+      const currentTurnIdForDraft = stateRef.state.currentTurnId ?? 0;
 
       // Photo-less drafts skip the identification gate — the user types the
       // scientific name and attaches a picture later via attach_image_to_draft.
@@ -1420,22 +1397,24 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
                 success: false,
                 error: "Identification required before saving a draft",
                 code: "identification_required",
-                suggestion: "Identify the species first, then ask whether the ID sounds right before saving.",
+                suggestion: "Identify the species first, then save the draft on the next turn.",
               }),
             }],
             details: {},
           };
         }
 
-        if (!latestIdentificationAgreementTurnId || latestIdentificationAgreementTurnId <= latestIdentificationTurnId) {
+        // Same "wait one turn after fresh ID" guard as publish_occurrence —
+        // no extra agreement/confirmation gates beyond that.
+        if (latestIdentificationTurnId >= currentTurnIdForDraft) {
           return {
             content: [{
               type: "text" as const,
               text: JSON.stringify({
                 success: false,
-                error: "Identification agreement required",
-                code: "identification_agreement_required",
-                suggestion: "Ask whether the identification sounds right before saving.",
+                error: "Wait for the user's next message before saving the draft",
+                code: "publish_too_soon",
+                suggestion: "Share the ID with the user and wait one turn before calling save_draft_observation.",
               }),
             }],
             details: {},
