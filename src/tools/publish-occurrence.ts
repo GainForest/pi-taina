@@ -1,9 +1,16 @@
 // Publish Darwin Core occurrence records to the community ATProto PDS
 // Ported from taina-v3-2, simplified for the community account model
 
+import type { AtpAgent } from "@atproto/api";
 import { getPublishingAgent, getPublishingDid, getPublishingHandle } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
 import { getOrgContext } from "../hyperindex.js";
+
+export interface PublishAgentOverride {
+  agent: AtpAgent;
+  did: string;
+  handle: string;
+}
 
 export interface TelegramUser {
   id: number;           // Telegram user ID (stable, numeric)
@@ -81,7 +88,10 @@ export type PublishResponse = PublishResult | PublishError;
  * scientificName is set. Uploads image blob if provided. Returns the ATProto
  * URI and CID on success.
  */
-export async function publishOccurrence(input: OccurrenceInput): Promise<PublishResponse> {
+export async function publishOccurrence(
+  input: OccurrenceInput,
+  override?: PublishAgentOverride,
+): Promise<PublishResponse> {
   // Validate required fields
   if (!input.scientificName || input.scientificName.trim() === "") {
     return { success: false, error: "scientificName is required" };
@@ -101,17 +111,24 @@ export async function publishOccurrence(input: OccurrenceInput): Promise<Publish
     };
   }
 
-  let agent;
-  try {
-    const config = loadEnvConfig();
-    agent = await getPublishingAgent(config);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `ATProto agent error: ${message}` };
+  let agent: AtpAgent;
+  let did: string;
+  let communityHandle: string;
+  if (override) {
+    agent = override.agent;
+    did = override.did;
+    communityHandle = override.handle;
+  } else {
+    try {
+      const config = loadEnvConfig();
+      agent = await getPublishingAgent(config);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `ATProto agent error: ${message}` };
+    }
+    did = getPublishingDid();
+    communityHandle = getPublishingHandle();
   }
-
-  const did = getPublishingDid();
-  const communityHandle = getPublishingHandle();
 
   // Build recordedBy string — include all three Telegram user identifiers
   // Store Telegram info in occurrenceRemarks for attribution, use handle for recordedBy
