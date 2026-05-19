@@ -5,7 +5,27 @@ When the user wants to publish/record/save a species observation to the communit
 
 > **Note — photo-less drafts**: If the user explicitly says they want to save a draft now and attach a picture later (no photo in this turn), skip steps 1 and 3 and go straight to gathering location + name + any local knowledge, then `save_draft_observation` with the scientific name the user typed and `images` left empty. The draft cannot be published until a picture is attached — see `draft-observations`.
 
-## Flow — FOLLOW THIS EXACTLY
+## Fast path — use this when the user is clearly ready
+
+If the user's reply already contains an unambiguous publish-intent verb or a strong yes
+("publica", "publícalo", "súbelo", "publish it", "yes publish", "sí publica",
+"correcto, publica", "go ahead", "do it"), AND you have a location AND
+identification, you may **collapse steps 3–6 into a single tool call**:
+
+- Treat the user's reply as both ID-agreement AND publish-confirmation.
+- Do NOT ask "¿te parece que sí es {species}?" again.
+- Do NOT ask "¿lo publico o lo guardo como borrador?" — they already said publish.
+- Call `publish_occurrence` immediately with all available fields (taxonomy, location,
+  occurrenceRemarks if the user volunteered any local knowledge in the original
+  message, otherwise omit it).
+- Local-knowledge fields (vernacular name, story, use) are OPTIONAL on the fast path —
+  only include what the user already volunteered. Do not back-fill by asking.
+
+The fast path exists because the slow path (one-question-per-turn) caused real users
+to abandon publishes during the 2026-05-18 community session. Use the fast path
+whenever it's safe to do so — when in doubt, fast path wins.
+
+## Standard flow — FOLLOW THIS EXACTLY when the fast path doesn't apply
 
 1. **Species ID required (photo path)** — For the normal flow you must have identified the species first (via identify_species). If the user has no photo and wants to save a draft, they must type the scientific name themselves — go to the photo-less branch in `draft-observations`.
 
@@ -83,8 +103,13 @@ When the user wants to publish/record/save a species observation to the communit
    - `eventDate` — date of observation (default: today)
    - `occurrenceRemarks` — **required if steps 4 or 5 produced anything** — combine the local/traditional name and any story/use/cultural note the user shared, in their language. Example: "Nombre local: Santa Rita. Usos: las abuelas la ponen en altares durante Día de Muertos."
 
-8. **After publishing** (publish_occurrence path only) — The tool returns a `hyperscanUrl`. ALWAYS share it:
-   > "Your observation has been published! 🎉 View it here: <a href="{hyperscanUrl}">Hyperscan</a>"
+8. **After publishing** (publish_occurrence path only) — The tool returns a `hyperscanUrl` AND a `linkInstruction` field. ALWAYS share the link in your VERY NEXT reply. Do not split into two replies, do not save the link for a follow-up — it must be visible in the same turn that confirms the publish:
+   > Spanish: "¡Listo, Diego! 🎉 Aquí está tu observación: <a href="{hyperscanUrl}">Ver en Hyperscan</a>"
+   > English: "Published! 🎉 View it here: <a href="{hyperscanUrl}">Hyperscan</a>"
+   > Portuguese: "Pronto! 🎉 Veja sua observação: <a href="{hyperscanUrl}">Hyperscan</a>"
+
+   The link is non-negotiable. If you confirm a publish without the link, the user
+   has to ask for it manually — that is a UX failure.
 
    **After saving a draft** (save_draft_observation path only) — confirm warmly and remind the user how to flush later. The `draft-observations` skill has the exact reply pattern.
 
@@ -119,5 +144,6 @@ The bot has previously gotten stuck asking the user "¿me confirmas?" two or thr
 - Never skip the local-knowledge asks (steps 4 and 5) — they run regardless of whether the user publishes now or saves for later
 - Never skip taxonomy fields — always pass them all
 - Never call `publish_occurrence` when the user chose to save for later — call `save_draft_observation` with the same fields instead
-- Never forget to share the Hyperscan link after a successful publish
+- Never forget to share the Hyperscan link after a successful publish — it goes in the SAME reply that confirms the publish, not a later turn
+- Never ask "do you want the link?" — always include it unprompted
 - Never ask the user for taxonomy info — you have it from identification

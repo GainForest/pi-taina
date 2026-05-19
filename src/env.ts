@@ -18,8 +18,8 @@ export interface EnvConfig {
   openaiApiKey: string | undefined;
 
   // Model overrides
-  piModel: string;        // defaults to "google/gemini-3.1-pro-preview"
-  speciesIdModel: string; // defaults to "gemini-3.1-pro-preview"
+  piModel: string;        // defaults to "google/gemini-3-flash-preview" — text/routing
+  speciesIdModel: string; // defaults to "gemini-3.1-pro-preview" — vision (species ID)
 
   // GFW Data API (optional — enables forest monitoring features)
   gfwDataApiKey: string | undefined;
@@ -70,7 +70,11 @@ export function loadEnvConfig(): EnvConfig {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
     openaiApiKey: process.env.OPENAI_API_KEY || undefined,
 
-    piModel: process.env.PI_MODEL || "google/gemini-3.1-pro-preview",
+    // PI_MODEL drives the conversational agent (text turns, tool routing) —
+    // flash is fast/cheap enough for routine turns. SPECIES_ID_MODEL stays on
+    // pro for the vision-heavy identify_species path. Override either env var
+    // to swap models without code changes.
+    piModel: process.env.PI_MODEL || "google/gemini-3-flash-preview",
     speciesIdModel: process.env.SPECIES_ID_MODEL || "gemini-3.1-pro-preview",
 
     gfwDataApiKey: process.env.GFW_DATA_API_KEY || undefined,

@@ -36,6 +36,7 @@ import {
   type PolygonPoint,
 } from "./tools/parse-polygon-webapp-payload.js";
 import { ensurePreferredLanguage, getPreferredLanguage, setPreferredLanguage } from "./user-language.js";
+import { withTimeout, TimeoutError } from "./utils/with-timeout.js";
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -69,6 +70,11 @@ interface SessionState {
 
 // Sessions keyed by Telegram user ID
 const sessions = new Map<number, SessionState>();
+
+// Cap accumulated photos per session to bound memory and prevent the
+// observation flow from mixing old/new photos. The 2026-05-18 incident
+// had a session reach 60+ photos which broke publish attribution.
+const MAX_PHOTOS_PER_SESSION = 20;
 
 // Lazily initialized config, authStorage, modelRegistry
 let _config: EnvConfig | null = null;
@@ -560,13 +566,38 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       }
 
       const imageData = photo.data.toString("base64");
-      const result = await identifySpecies(
-        imageData,
-        photo.mimeType,
-        config.geminiApiKey,
-        config.speciesIdModel,
-        params.userContext
-      );
+      let result;
+      try {
+        result = await withTimeout(
+          identifySpecies(
+            imageData,
+            photo.mimeType,
+            config.geminiApiKey,
+            config.speciesIdModel,
+            params.userContext
+          ),
+          25_000,
+          "identify_species"
+        );
+      } catch (err) {
+        if (err instanceof TimeoutError) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({
+                  success: false,
+                  error: err.message,
+                  code: "timeout",
+                  suggestion: "Let the user know the species identifier is slow right now and offer to retry shortly.",
+                }),
+              },
+            ],
+            details: {},
+          };
+        }
+        throw err;
+      }
 
       stateRef.state.latestIdentificationTurnId = stateRef.state.currentTurnId;
 
@@ -702,8 +733,13 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
           text: JSON.stringify({
             ...result,
             ...(result.success ? {
+              // ALWAYS surface the hyperscanUrl in the next user-facing reply.
+              // Phrase it warmly, in the user's language, with the URL as a
+              // visible hyperlink. Do not omit it under any circumstances —
+              // users explicitly asked for the link after each publish.
+              linkInstruction: `Your VERY NEXT reply MUST include this link verbatim so the user can see their observation: ${result.hyperscanUrl} — phrase it in the user's language (e.g. "👉 Ver tu observación: <a href=\\"${result.hyperscanUrl}\\">Hyperscan</a>"). Do not skip it, do not save it for later — surface it now.`,
               suggestMeasurements: true,
-              measurementHint: "Ask the user if they want to add field measurements for this organism (e.g. height, trunk diameter, biomass for plants; body mass, wing length, health score for animals). Call publish_measurement if they say yes.",
+              measurementHint: "AFTER sharing the link, optionally ask the user if they want to add field measurements (height, trunk diameter, body mass, etc). Call publish_measurement if they say yes. Do not ask before the link — the link comes first.",
             } : {}),
           }),
         }],
@@ -923,11 +959,26 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
       }
 
       // Step 2: Query in parallel
-      const [treeCoverLoss, fireAlerts, deforestationAlerts] = await Promise.all([
-        getTreeCoverLoss(config.gfwDataApiKey, geostoreId, geostoreOrigin),
-        getFireAlerts(config.gfwDataApiKey, geostoreId, 7, geostoreOrigin),
-        getDeforestationAlerts(config.gfwDataApiKey, geostoreId, 30, geostoreOrigin),
-      ]);
+      let treeCoverLoss, fireAlerts, deforestationAlerts;
+      try {
+        [treeCoverLoss, fireAlerts, deforestationAlerts] = await withTimeout(
+          Promise.all([
+            getTreeCoverLoss(config.gfwDataApiKey, geostoreId, geostoreOrigin),
+            getFireAlerts(config.gfwDataApiKey, geostoreId, 7, geostoreOrigin),
+            getDeforestationAlerts(config.gfwDataApiKey, geostoreId, 30, geostoreOrigin),
+          ]),
+          45_000,
+          "forest_report_queries"
+        );
+      } catch (err) {
+        if (err instanceof TimeoutError) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ error: err.message, code: "timeout" }) }],
+            details: {},
+          };
+        }
+        throw err;
+      }
 
       // Step 3: Build GFW map URL
       const mapUrl = buildGfwMapUrl(params.latitude, params.longitude);
@@ -1214,7 +1265,22 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     description: 'Get current weather conditions and a 3-day forecast for a location. Use when the user asks about weather, temperature, rain, wind, or conditions at a location. Useful for planning field work, AudioMoth deployments, or outdoor activities.',
     parameters: weatherReportSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
-      const result = await getWeather(params.latitude, params.longitude);
+      let result;
+      try {
+        result = await withTimeout(
+          getWeather(params.latitude, params.longitude),
+          15_000,
+          "weather_report"
+        );
+      } catch (err) {
+        if (err instanceof TimeoutError) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message, code: 'timeout' }) }],
+            details: {},
+          };
+        }
+        throw err;
+      }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result) }],
         details: {},
@@ -1744,7 +1810,12 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
 
   const currentTurnId = sessionState.currentTurnId;
 
+  let photoTrimNotice = "";
   if (msg.photo) {
+    if (sessionState.photos.length >= MAX_PHOTOS_PER_SESSION) {
+      sessionState.photos.shift();
+      photoTrimNotice = `\n[System: this observation session has reached the ${MAX_PHOTOS_PER_SESSION}-photo cap; oldest photo was dropped to keep memory bounded. Briefly let the user know and suggest publishing or restarting the observation.]`;
+    }
     sessionState.photos.push({
       data: msg.photo.data,
       mimeType: msg.photo.mimeType,
@@ -1777,13 +1848,23 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
   if (msg.photo) {
     const userText = msg.text ? ` ${msg.text}` : "";
     latestUserText = msg.text ?? undefined;
-    promptBody = `The user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}`;
+    promptBody = `The user sent a photo (photo ${sessionState.photos.length} in this observation session). [Photo is available for analysis].${userText}${photoTrimNotice}`;
   } else if (msg.voice) {
-    const transcription = await transcribeVoice(
-      msg.voice.data,
-      msg.voice.mimeType,
-      getConfig().geminiApiKey
-    );
+    let transcription;
+    try {
+      transcription = await withTimeout(
+        transcribeVoice(msg.voice.data, msg.voice.mimeType, getConfig().geminiApiKey),
+        20_000,
+        "voice_transcription"
+      );
+    } catch (err) {
+      if (err instanceof TimeoutError) {
+        console.warn(err.message);
+        transcription = { error: err.message };
+      } else {
+        throw err;
+      }
+    }
     if ("text" in transcription) {
       latestUserText = transcription.text;
       promptBody = `[Voice note transcription]: ${transcription.text}`;
@@ -1855,6 +1936,16 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     sessionState.latestPublishConfirmationTurnId = currentTurnId;
   } else if (isAgreement) {
     sessionState.latestIdentificationAgreementTurnId = currentTurnId;
+    // If we already have an identification, treat this agreement as an
+    // implicit publish confirmation too — users who say "Sim" once after
+    // identification almost always mean "yes, publish it". Forcing a separate
+    // confirmation turn caused 14 publish_confirmation_required gate errors
+    // during the 2026-05-18 community session. The same-turn-as-photo guard
+    // at the publish gate (strict > identificationTurnId) still applies.
+    const priorIdentificationTurnId = sessionState.latestIdentificationTurnId ?? 0;
+    if (priorIdentificationTurnId > 0 && priorIdentificationTurnId < currentTurnId) {
+      sessionState.latestPublishConfirmationTurnId = currentTurnId;
+    }
   }
 
   // Collect response text from events

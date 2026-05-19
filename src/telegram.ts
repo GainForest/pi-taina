@@ -3,7 +3,9 @@
 // extracting locations, and sending responses.
 // Uses grammY for the Telegram Bot API.
 
-import { Bot, InputFile, InlineKeyboard, Keyboard } from "grammy";
+import { Bot, InputFile, InlineKeyboard, Keyboard, type Context } from "grammy";
+import { run, sequentialize, type RunnerHandle } from "@grammyjs/runner";
+import { withTimeout } from "./utils/with-timeout.js";
 import type { EnvConfig } from "./env.js";
 import { formatTelegramHtml } from "./telegram-format.js";
 import { ensurePreferredLanguage, getPreferredLanguage, setPreferredLanguage } from "./user-language.js";
@@ -278,7 +280,7 @@ export interface TelegramBotApi {
   sendPhoto: (chatId: number, photo: Buffer, caption?: string) => Promise<void>;
   sendAudio: (chatId: number, audio: Buffer, filename: string, caption?: string) => Promise<void>;
   sendTyping: (chatId: number) => Promise<void>;
-  stop: () => void;
+  stop: () => Promise<void>;
 }
 
 async function sendStartScreen(reply: StartReply, locale: SupportedLocale, isAuthorizedUser: boolean): Promise<void> {
@@ -307,6 +309,16 @@ export async function createTelegramBot(
   }
 
   const bot = new Bot(token);
+
+  // Per-chat sequentialization: updates from the same chat run in order,
+  // updates from different chats run in parallel. Must be installed before
+  // any other middleware so the constraint sees every update.
+  // Keyed on chat id because SessionState is per-chat (sessions Map in agent.ts).
+  bot.use(
+    sequentialize((ctx: Context): string | undefined =>
+      ctx.chat?.id !== undefined ? String(ctx.chat.id) : undefined
+    )
+  );
 
   // Fetch bot info once so we know our own username for mention detection
   const botInfo = await bot.api.getMe();
@@ -730,10 +742,10 @@ export async function createTelegramBot(
         // Pick the largest photo (last in the array)
         const largestPhoto = msg.photo[msg.photo.length - 1];
         try {
-          const photoData = await downloadTelegramFile(
-            bot,
-            largestPhoto.file_id,
-            token
+          const photoData = await withTimeout(
+            downloadTelegramFile(bot, largestPhoto.file_id, token),
+            15_000,
+            "download_photo"
           );
           incoming.photo = {
             data: photoData,
@@ -749,10 +761,10 @@ export async function createTelegramBot(
       // ── Voice handling ───────────────────────────────────────────────────
       if (hasVoice && msg.voice) {
         try {
-          const voiceData = await downloadTelegramFile(
-            bot,
-            msg.voice.file_id,
-            token
+          const voiceData = await withTimeout(
+            downloadTelegramFile(bot, msg.voice.file_id, token),
+            15_000,
+            "download_voice"
           );
           incoming.voice = {
             data: voiceData,
@@ -1011,11 +1023,12 @@ export async function createTelegramBot(
     console.error("grammY bot error:", err);
   });
 
-  // ─── Start long polling ────────────────────────────────────────────────────
-  // bot.start() is non-blocking when called without await in some setups,
-  // but we call it without await so the function returns the API object
-  // while polling runs in the background.
-  bot.start();
+  // ─── Start long polling via @grammyjs/runner ───────────────────────────────
+  // run() processes updates concurrently across chats. Combined with
+  // sequentialize() above, same-chat updates stay ordered while different
+  // chats are handled in parallel — fixes the cross-user lockup where one
+  // slow Gemini call blocked every other user behind it.
+  const runner: RunnerHandle = run(bot);
 
   // ─── Return API ────────────────────────────────────────────────────────────
 
@@ -1119,8 +1132,8 @@ export async function createTelegramBot(
     }
   };
 
-  const stop = (): void => {
-    bot.stop();
+  const stop = async (): Promise<void> => {
+    await runner.stop();
   };
 
   return { reply, sendWebAppButton, sendPhoto, sendAudio, sendTyping, stop };

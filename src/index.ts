@@ -6,8 +6,13 @@ import { getAtprotoAgent, getCommunityDid } from "./atproto.js";
 import { initOrgContext } from "./hyperindex.js";
 import { initWhitelist } from './whitelist.js';
 import { initDrafts } from './drafts.js';
+import { initPersistentLogger } from "./utils/persistent-logger.js";
 
 async function main() {
+  // Tee stdout/stderr to data/logs/taina-YYYY-MM-DD.log before anything else
+  // logs, so we have a durable record across journald rotations.
+  await initPersistentLogger();
+
   // 1. Validate required env vars and load typed config (fail fast)
   let config;
   try {
@@ -118,7 +123,7 @@ async function main() {
   // 4. Graceful shutdown
   const shutdown = async () => {
     console.log("\n🛑 Shutting down...");
-    bot.stop();
+    await bot.stop();
     await disposeAllSessions();
     process.exit(0);
   };
