@@ -722,7 +722,14 @@ export async function createTelegramBot(
       // ── Group filtering ────────────────────────────────────────────────────
       // In groups, only forward if @mentioned, photo sent, location sent, voice sent, or Web App data arrived
       if (isGroup && !isMentioned && !hasPhoto && !hasLocation && !hasVoice && !hasWebAppData) {
+        console.log(`[skip] group ${msg.chat.id} user=${user.id} — no mention and no photo/voice/location/webapp`);
         return;
+      }
+
+      // ── Whitelist check log (the actual auth gate is in the agent flow) ──
+      const authorized = isAuthorized(user.id);
+      if (!authorized) {
+        console.log(`[auth] not authorized: user=${user.id} (${user.displayName}) — will be told to /join`);
       }
 
       // ── Build IncomingMessage ──────────────────────────────────────────────

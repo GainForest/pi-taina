@@ -62,6 +62,10 @@ async function main() {
   const recentMessageIds = new Set<number>();
 
   const bot: TelegramBotApi = await createTelegramBot(async (msg) => {
+    const kind = msg.photo ? "photo" : msg.voice ? "voice" : msg.location ? "location" : msg.webAppData ? "webapp" : "text";
+    const textPreview = msg.text ? msg.text.replace(/\s+/g, " ").slice(0, 60) : "";
+    console.log(`[recv] chat=${msg.chatId} user=${msg.user.id} (${msg.user.displayName}) kind=${kind} group=${msg.isGroup} text="${textPreview}"`);
+
     if (recentMessageIds.has(msg.messageId)) {
       console.warn(`[dedup] Skipping already-processed message_id ${msg.messageId}`);
       return;
