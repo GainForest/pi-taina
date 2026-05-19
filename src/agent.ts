@@ -1760,9 +1760,25 @@ export async function getOrCreateSession(userId: number, isAdmin: boolean = fals
 
   let model = modelRegistry.find(provider, modelId);
   if (!model) {
-    // Fall back to first available model
+    // Preferred model is not registered — pick a known-good Gemini variant
+    // before falling through to "first available", which has historically
+    // meant a retired Claude that 404s on every call.
     const available = modelRegistry.getAvailable();
-    model = available[0];
+    const geminiFallbackIds = [
+      "gemini-3-flash-preview",
+      "gemini-3-pro-preview",
+      "gemini-3.1-pro-preview",
+      "gemini-2.5-flash",
+      "gemini-2.5-pro",
+    ];
+    const geminiFallback = available.find(
+      (m) => m.provider === "google" && geminiFallbackIds.includes(m.id)
+    );
+    model = geminiFallback ?? available[0];
+    console.warn(
+      `[model] PI_MODEL "${config.piModel}" not found in registry; falling back to ${model ? `${model.provider}/${model.id}` : "(no model available!)"}. ` +
+      `Set PI_MODEL to one of: ${geminiFallbackIds.map((id) => `google/${id}`).join(", ")}.`
+    );
   }
 
   const sessionDir = `./data/sessions/${userId}`;
