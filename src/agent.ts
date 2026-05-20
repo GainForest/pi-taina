@@ -37,6 +37,40 @@ import {
 } from "./tools/parse-polygon-webapp-payload.js";
 import { ensurePreferredLanguage, getPreferredLanguage, setPreferredLanguage } from "./user-language.js";
 import { withTimeout, TimeoutError } from "./utils/with-timeout.js";
+import { trimRunawayRepetition } from "./utils/detect-repetition.js";
+
+// Manually-constructed Model entries for IDs the SDK's models.generated.js
+// doesn't ship yet but the upstream API does support. Used as a fallback
+// after modelRegistry.find() — lets us pass "google/gemini-3.5-flash" even
+// though pi-ai 0.57.1's registry only knows up to gemini-3-flash-preview.
+// Verified live via REST: gemini-3.5-flash returns 200 on generateContent.
+const MANUAL_MODELS: Record<string, Record<string, {
+  id: string;
+  name: string;
+  api: "google-generative-ai";
+  provider: string;
+  baseUrl: string;
+  reasoning: boolean;
+  input: string[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow: number;
+  maxTokens: number;
+}>> = {
+  google: {
+    "gemini-3.5-flash": {
+      id: "gemini-3.5-flash",
+      name: "Gemini 3.5 Flash",
+      api: "google-generative-ai",
+      provider: "google",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      reasoning: false,
+      input: ["text", "image"],
+      cost: { input: 0.3, output: 2.5, cacheRead: 0.075, cacheWrite: 0 },
+      contextWindow: 1048576,
+      maxTokens: 65536,
+    },
+  },
+};
 
 // ─── Per-session state ────────────────────────────────────────────────────────
 
@@ -1745,7 +1779,16 @@ export async function getOrCreateSession(userId: number, isAdmin: boolean = fals
 
   let model = modelRegistry.find(provider, modelId);
   if (!model) {
-    // Preferred model is not registered — pick a known-good Gemini variant
+    // Try our manual table next (models the pi-ai SDK doesn't ship yet but
+    // the upstream API does support — e.g. gemini-3.5-flash).
+    const manual = MANUAL_MODELS[provider]?.[modelId];
+    if (manual) {
+      model = manual as unknown as typeof model;
+      console.log(`[model] using manual model entry for ${provider}/${modelId} (not in SDK registry)`);
+    }
+  }
+  if (!model) {
+    // Last-resort fallback: prefer a known-good Gemini in the registry
     // before falling through to "first available", which has historically
     // meant a retired Claude that 404s on every call.
     const available = modelRegistry.getAvailable();
@@ -1761,8 +1804,7 @@ export async function getOrCreateSession(userId: number, isAdmin: boolean = fals
     );
     model = geminiFallback ?? available[0];
     console.warn(
-      `[model] PI_MODEL "${config.piModel}" not found in registry; falling back to ${model ? `${model.provider}/${model.id}` : "(no model available!)"}. ` +
-      `Set PI_MODEL to one of: ${geminiFallbackIds.map((id) => `google/${id}`).join(", ")}.`
+      `[model] PI_MODEL "${config.piModel}" not found in registry or manual table; falling back to ${model ? `${model.provider}/${model.id}` : "(no model available!)"}.`
     );
   }
 
@@ -1972,7 +2014,17 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     unsubscribe();
   }
 
-  return responseText;
+  // Defensive guard against LLM degeneration loops. On 2026-05-19, Gemini
+  // 3 Flash Preview returned a reply that was 32_000 chars where 31_500
+  // were the same emoji 🌻 — and that was forwarded to a real user. We
+  // truncate any same-codepoint run longer than 30 chars before sending.
+  const safeText = trimRunawayRepetition(responseText, { maxRunChars: 30 });
+  if (safeText.length < responseText.length) {
+    console.warn(
+      `[degeneration] trimmed runaway repetition: original=${responseText.length}c, trimmed=${safeText.length}c, user=${msg.user.id}`
+    );
+  }
+  return safeText;
 }
 
 // ─── Pending chart ────────────────────────────────────────────────────────────

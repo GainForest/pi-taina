@@ -18,8 +18,8 @@ export interface EnvConfig {
   openaiApiKey: string | undefined;
 
   // Model overrides
-  piModel: string;        // defaults to "google/gemini-3-flash-preview" — text/routing
-  speciesIdModel: string; // defaults to "gemini-3-flash-preview" — vision (species ID)
+  piModel: string;        // defaults to "google/gemini-3.5-flash" — text/routing/vision
+  speciesIdModel: string; // defaults to "gemini-3.5-flash" — vision (species ID)
 
   // GFW Data API (optional — enables forest monitoring features)
   gfwDataApiKey: string | undefined;
@@ -70,14 +70,14 @@ export function loadEnvConfig(): EnvConfig {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || undefined,
     openaiApiKey: process.env.OPENAI_API_KEY || undefined,
 
-    // Both default to Gemini 3 Flash Preview — fast and cheap enough for
-    // routine text turns AND vision (species ID). Note: must match an ID
-    // registered in the pi-ai SDK (e.g. gemini-3-flash-preview,
-    // gemini-3-pro-preview, gemini-3.1-pro-preview, gemini-2.5-flash).
-    // If the ID is unknown the SDK falls back to a random "available" model,
-    // which has historically meant a retired Claude that 404s.
-    piModel: process.env.PI_MODEL || "google/gemini-3-flash-preview",
-    speciesIdModel: process.env.SPECIES_ID_MODEL || "gemini-3-flash-preview",
+    // Both default to Gemini 3.5 Flash — GA model that fixed the
+    // degeneration loop seen in 3-flash-preview (where Gemini emitted
+    // 31_500 emojis in a single reply on 2026-05-19). The pi-ai SDK 0.57.1
+    // doesn't ship this model in its registry yet, so agent.ts has a
+    // MANUAL_MODELS table that adds it back. Override via env to test
+    // other variants (e.g. gemini-3-flash-preview, gemini-2.5-flash).
+    piModel: process.env.PI_MODEL || "google/gemini-3.5-flash",
+    speciesIdModel: process.env.SPECIES_ID_MODEL || "gemini-3.5-flash",
 
     gfwDataApiKey: process.env.GFW_DATA_API_KEY || undefined,
 
