@@ -1,8 +1,8 @@
 // Attach community biodiversity observations as evidence to a hypercert
 // Creates an org.hypercerts.context.attachment record linking occurrence URIs to a hypercert
 
-import { getPublishingAgent, getPublishingDid } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
+import { getPublishingClient, normalizePublishingError, type PublishingClient } from "../publishing.js";
 
 export interface AttachInput {
   hypercertUri: string;       // AT URI of the hypercert to attach evidence to
@@ -10,6 +10,7 @@ export interface AttachInput {
   // Optional filters for which occurrences to include
   sinceDate?: string;         // Only include occurrences after this ISO date
   limit?: number;             // Max occurrences to attach (default 100, max 200)
+  telegramUserId?: number;    // Active Telegram session for organization selection
 }
 
 export interface AttachResult {
@@ -93,16 +94,15 @@ interface GraphQLResponse<T> {
  * 3. Creates an org.hypercerts.context.attachment record linking them to the hypercert
  */
 export async function attachObservations(input: AttachInput): Promise<AttachResponse> {
-  // Get ATProto agent + community DID — return error if not configured
-  let agent;
+  // Get publishing client + organization DID — return error if not configured
+  let publisher: PublishingClient;
   let communityDid: string;
   try {
     const config = loadEnvConfig();
-    agent = await getPublishingAgent(config);
-    communityDid = getPublishingDid();
+    publisher = await getPublishingClient(config, input.telegramUserId);
+    communityDid = publisher.did;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `ATProto not configured: ${message}` };
+    return { success: false, error: `ATProto not configured: ${normalizePublishingError(err)}` };
   }
 
   // Clamp limit: default 100, max 200
@@ -209,18 +209,17 @@ export async function attachObservations(input: AttachInput): Promise<AttachResp
   // Create the record in collection org.hypercerts.context.attachment
   let createResult;
   try {
-    createResult = await agent.com.atproto.repo.createRecord({
-      repo: communityDid,
+    createResult = await publisher.createRecord({
       collection: 'org.hypercerts.context.attachment',
       record,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Failed to create attachment record: ${message}` };
+    return { success: false, error: `Failed to create attachment record: ${normalizePublishingError(err)}` };
   }
 
   // Build hyperscan URL from the attachment URI
-  const hyperscanUrl = buildHyperscanUrl(createResult.data.uri);
+  const hyperscanUrl = buildHyperscanUrl(createResult.uri);
 
   // Build occurrence summary
   const occurrenceSummary = occurrencesToAttach.map(occ => ({
@@ -231,8 +230,8 @@ export async function attachObservations(input: AttachInput): Promise<AttachResp
 
   return {
     success: true,
-    attachmentUri: createResult.data.uri,
-    attachmentCid: createResult.data.cid,
+    attachmentUri: createResult.uri,
+    attachmentCid: createResult.cid,
     hypercertUri: input.hypercertUri,
     occurrenceCount: occurrencesToAttach.length,
     occurrences: occurrenceSummary,

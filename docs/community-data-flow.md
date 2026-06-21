@@ -46,11 +46,11 @@ Each community runs its own bot on its own hardware (Mac Mini, Raspberry Pi). Th
 
 When the user picks **publish** (or runs `/publish <id>` on a saved draft), the record is pushed to ATProto:
 
-1. Images are uploaded as blobs to the community/org PDS
-2. A Darwin Core occurrence record is written to the account's repo
-3. The post becomes a permanent, addressable URI (e.g. `at://did:plc:.../app.bsky.feed.post/...`)
+1. Images are uploaded as blobs under the selected organization/community identity
+2. A Darwin Core occurrence record is written under that same identity
+3. The post becomes a permanent, addressable URI (e.g. `at://did:plc:.../app.gainforest.dwc.occurrence/...`)
 
-If the community has set up an **org account** (via the organization-setup flow), publishes go through that org handle on `gainforest.id`. Otherwise they go through the community account configured by `ATPROTO_HANDLE` / `ATPROTO_PASSWORD`.
+If the signed-in account belongs to one or more shared organizations, Tainá asks which organization to use for the session and writes there. Older standalone organization accounts still work the same way as before. If no organization is available yet, Tainá can help create one.
 
 Once published, the record is:
 

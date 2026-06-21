@@ -875,27 +875,39 @@ async function testOrgShapes(): Promise<void> {
     results.push(fail('org-shapes:validate-displayName', err instanceof Error ? err.message : String(err)));
   }
 
-  // ─── invite code: required when neither param nor env var is set ─────────────
+  // ─── shared organization config: required before network calls ──────────────
+  const savedRequiredEnv = {
+    TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    ADMIN_USER_ID: process.env.ADMIN_USER_ID,
+  };
   try {
+    process.env.TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? 'test-token';
+    process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? 'test-key';
+    process.env.ADMIN_USER_ID = process.env.ADMIN_USER_ID ?? '1';
+    delete process.env.CGS_SERVICE_URL;
+    delete process.env.CGS_SERVICE_DID;
     const r = await createOrganization(baseInput);
-    assert(!r.success, 'expected missing invite code to be rejected before any network call');
-    assert(r.error.toLowerCase().includes('invite code'), `expected invite-code error, got: ${r.error}`);
-    results.push(pass('org-shapes:validate-inviteCode-missing', 'rejected when neither inviteCode param nor GAINFOREST_INVITE_CODE env var is set'));
+    assert(!r.success, 'expected missing shared organization config to be rejected before any network call');
+    assert(r.error.toLowerCase().includes('shared organization'), `expected shared organization config error, got: ${r.error}`);
+    results.push(pass('org-shapes:validate-shared-org-config', 'rejected when shared organization service is not configured'));
   } catch (err) {
-    results.push(fail('org-shapes:validate-inviteCode-missing', err instanceof Error ? err.message : String(err)));
+    results.push(fail('org-shapes:validate-shared-org-config', err instanceof Error ? err.message : String(err)));
   }
 
-  // ─── invite code: env-var fallback should let validation past the code gate ──
+  // ─── validation still happens before shared organization config ─────────────
   try {
-    process.env.GAINFOREST_INVITE_CODE = 'env-fallback-code';
-    // Force a different earlier check to fail so we know the invite gate passed.
     const r = await createOrganization({ ...baseInput, displayName: 'Short' });
-    assert(!r.success, 'expected too-short displayName to still be rejected with env code set');
-    assert(r.error.toLowerCase().includes('displayname'), `expected displayName error (proving invite-code gate was passed), got: ${r.error}`);
-    results.push(pass('org-shapes:inviteCode-envFallback', 'GAINFOREST_INVITE_CODE env var is used when inviteCode param is omitted'));
+    assert(!r.success, 'expected too-short displayName to still be rejected');
+    assert(r.error.toLowerCase().includes('displayname'), `expected displayName error, got: ${r.error}`);
+    results.push(pass('org-shapes:validation-before-config', 'validation errors are returned before config checks'));
   } catch (err) {
-    results.push(fail('org-shapes:inviteCode-envFallback', err instanceof Error ? err.message : String(err)));
+    results.push(fail('org-shapes:validation-before-config', err instanceof Error ? err.message : String(err)));
   } finally {
+    for (const [key, value] of Object.entries(savedRequiredEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     if (savedInviteCode === undefined) {
       delete process.env.GAINFOREST_INVITE_CODE;
     } else {

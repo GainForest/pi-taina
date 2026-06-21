@@ -26,6 +26,14 @@ import { createOrganization } from "./tools/create-organization.js";
 import { buildPolygonWebAppUrl } from "./tools/build-polygon-webapp-url.js";
 import { attachObservations } from "./tools/attach-observations.js";
 import { getWeather } from "./tools/weather.js";
+import {
+  buildOrganizationPromptContext,
+  discoverOrganizationOptions,
+  getCgsClient,
+  resolveActiveOrganization,
+  roleAllows,
+  selectOrganization,
+} from "./organizations.js";
 import { getSpeciesNearLocation } from './tools/inaturalist-api.js';
 import { detectAudioMothSDCards } from './tools/detect-audiomoth-sd.js';
 import { uploadAudioMothSD, createAudioMothDeployment } from './tools/ingest-audiomoth-sd.js';
@@ -417,6 +425,19 @@ const geocodeLocationSchema = Type.Object({
 });
 
 const clearPhotosSchema = Type.Object({});
+
+const selectOrganizationSchema = Type.Object({
+  organization: Type.String({ description: "The organization number, name, handle, or DID chosen by the user from list_organizations." }),
+});
+
+const memberDidSchema = Type.Object({
+  memberDid: Type.String({ description: "ATProto DID of the person to manage, e.g. did:plc:..." }),
+});
+
+const setOrganizationRoleSchema = Type.Object({
+  memberDid: Type.String({ description: "ATProto DID of the member whose role should change" }),
+  role: Type.Union([Type.Literal("member"), Type.Literal("admin")], { description: "New role. Owner cannot be assigned here." }),
+});
 
 const forestReportSchema = Type.Object({
   latitude: Type.Number({ description: "GPS latitude of the location to analyze" }),
@@ -918,6 +939,134 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     },
   };
 
+  const listOrganizationsTool: ToolDefinition<typeof clearPhotosSchema> = {
+    name: "list_organizations",
+    label: "List Organizations",
+    description: "List organizations available to the signed-in account. Use when the user asks which organization is active or needs to choose one. Say organization, not protocol jargon.",
+    parameters: clearPhotosSchema,
+    execute: async () => {
+      const options = await discoverOrganizationOptions(config);
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            organizations: options.map((option, index) => ({
+              number: index + 1,
+              id: option.id,
+              name: option.displayName ?? option.handle,
+              handle: option.handle,
+              role: option.role,
+              kind: option.kind,
+            })),
+            suggestion: options.length > 1
+              ? "Ask which organization to use for this session, then call select_organization."
+              : options.length === 1
+                ? "This organization is selected automatically."
+                : "No organization is available yet. Offer to create one.",
+          }),
+        }],
+        details: {},
+      };
+    },
+  };
+
+  const selectOrganizationTool: ToolDefinition<typeof selectOrganizationSchema> = {
+    name: "select_organization",
+    label: "Select Organization",
+    description: "Select which organization to use for this Telegram session after the user chooses from list_organizations.",
+    parameters: selectOrganizationSchema,
+    execute: async (_toolCallId, params) => {
+      const user = stateRef.state.currentUser;
+      if (!user) return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "No user context" }) }], details: {} };
+      try {
+        const option = await selectOrganization(config, user.id, params.organization);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({
+            success: true,
+            organization: { name: option.displayName ?? option.handle, handle: option.handle, role: option.role },
+            suggestion: `Continue under ${option.displayName ?? option.handle}.`,
+          }) }],
+          details: {},
+        };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }) }], details: {} };
+      }
+    },
+  };
+
+  const listOrganizationMembersTool: ToolDefinition<typeof clearPhotosSchema> = {
+    name: "list_organization_members",
+    label: "List Organization Members",
+    description: "List members of the current organization. Available to organization members.",
+    parameters: clearPhotosSchema,
+    execute: async () => {
+      try {
+        const org = await resolveActiveOrganization(config, stateRef.state.currentUser?.id);
+        if (org.kind !== "group") return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "Member controls are only available for shared organizations." }) }], details: {} };
+        const cgs = await getCgsClient(config);
+        const members = await cgs.listMembers(org.did);
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, organization: org.displayName ?? org.handle, members }) }], details: {} };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }) }], details: {} };
+      }
+    },
+  };
+
+  const addOrganizationMemberTool: ToolDefinition<typeof memberDidSchema> = {
+    name: "add_organization_member",
+    label: "Add Organization Member",
+    description: "Add a person to the current organization as a member. Only offer this when the current role is admin or owner.",
+    parameters: memberDidSchema,
+    execute: async (_toolCallId, params) => {
+      try {
+        const org = await resolveActiveOrganization(config, stateRef.state.currentUser?.id);
+        if (org.kind !== "group" || !roleAllows(org.role, "manageMembers")) return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "You do not have permission to add members for this organization." }) }], details: {} };
+        const cgs = await getCgsClient(config);
+        const member = await cgs.addMember(org.did, params.memberDid, "member");
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, member }) }], details: {} };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }) }], details: {} };
+      }
+    },
+  };
+
+  const removeOrganizationMemberTool: ToolDefinition<typeof memberDidSchema> = {
+    name: "remove_organization_member",
+    label: "Remove Organization Member",
+    description: "Remove a person from the current organization. Only offer this when the current role is admin or owner.",
+    parameters: memberDidSchema,
+    execute: async (_toolCallId, params) => {
+      try {
+        const org = await resolveActiveOrganization(config, stateRef.state.currentUser?.id);
+        if (org.kind !== "group" || !roleAllows(org.role, "manageMembers")) return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "You do not have permission to remove members for this organization." }) }], details: {} };
+        const cgs = await getCgsClient(config);
+        const result = await cgs.removeMember(org.did, params.memberDid);
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, result }) }], details: {} };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }) }], details: {} };
+      }
+    },
+  };
+
+  const setOrganizationRoleTool: ToolDefinition<typeof setOrganizationRoleSchema> = {
+    name: "set_organization_role",
+    label: "Set Organization Role",
+    description: "Change a member between member and admin. Only offer this when the current role is owner.",
+    parameters: setOrganizationRoleSchema,
+    execute: async (_toolCallId, params) => {
+      try {
+        const org = await resolveActiveOrganization(config, stateRef.state.currentUser?.id);
+        if (org.kind !== "group" || !roleAllows(org.role, "setRoles")) return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: "Only the organization owner can change roles." }) }], details: {} };
+        const cgs = await getCgsClient(config);
+        const result = await cgs.setRole(org.did, params.memberDid, params.role);
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: true, result }) }], details: {} };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: JSON.stringify({ success: false, error: err instanceof Error ? err.message : String(err) }) }], details: {} };
+      }
+    },
+  };
+
   const forestReportTool: ToolDefinition<typeof forestReportSchema> = {
     name: "forest_report",
     label: "Forest Report",
@@ -1107,7 +1256,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
   const createOrganizationTool: ToolDefinition<typeof createOrganizationSchema> = {
     name: 'create_organization',
     label: 'Create Organization',
-    description: 'Create a new organization on the gainforest.id network. Creates an account and sets up the organization profile, metadata, and (if a polygon or point was provided) a default site. Call this only after collecting all required info from the user and showing them a confirmation summary. Required: handle, displayName, description, organizationType, country (ISO 3166-1 alpha-2), and at least one objective.',
+    description: 'Create a new organization and set up its profile, metadata, and (if a polygon or point was provided) a default site. Call this only after collecting all required info from the user and showing them a confirmation summary. Required: handle, displayName, description, organizationType, country (ISO 3166-1 alpha-2), and at least one objective. Do not mention internal protocol details to the user.',
     parameters: createOrganizationSchema,
     execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
       const user = stateRef.state.currentUser;
@@ -1157,6 +1306,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
         hypercertCid: params.hypercertCid,
         sinceDate: params.sinceDate,
         limit: params.limit,
+        telegramUserId: stateRef.state.currentUser?.id,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: {} };
     },
@@ -1224,6 +1374,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
               decimalLatitude: params.latitude,
               decimalLongitude: params.longitude,
             },
+            telegramUserId: stateRef.state.currentUser?.id,
           });
           if ("uri" in reg) {
             deploymentUri = reg.uri;
@@ -1389,7 +1540,7 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
               ...(params.altitude !== undefined ? { altitude: params.altitude } : {}),
             }
           : undefined;
-      const result = await uploadAudioMothSD(params.folder, params.deploymentUri, location);
+      const result = await uploadAudioMothSD(params.folder, params.deploymentUri, location, stateRef.state.currentUser?.id);
       return {
         content: [{ type: "text" as const, text: JSON.stringify(result) }],
         details: {},
@@ -1721,6 +1872,12 @@ function buildCustomTools(stateRef: { state: SessionState }): ToolDefinition[] {
     publishMeasurementTool as unknown as ToolDefinition,
     geocodeLocationTool as unknown as ToolDefinition,
     clearPhotosTool as unknown as ToolDefinition,
+    listOrganizationsTool as unknown as ToolDefinition,
+    selectOrganizationTool as unknown as ToolDefinition,
+    listOrganizationMembersTool as unknown as ToolDefinition,
+    addOrganizationMemberTool as unknown as ToolDefinition,
+    removeOrganizationMemberTool as unknown as ToolDefinition,
+    setOrganizationRoleTool as unknown as ToolDefinition,
     forestReportTool as unknown as ToolDefinition,
     queryHyperindexTool as unknown as ToolDefinition,
     createHypercertTool as unknown as ToolDefinition,
@@ -1951,9 +2108,11 @@ export async function sendToAgent(msg: IncomingMessage): Promise<string> {
     ? `\nThe user's preferred language is ${preferredLanguage}. Keep replies in that language, preserve Tainá's warm persona, and use the same language for chart titles, axis labels, and other generated labels. If the user clearly asks to switch languages, follow the new language.`
     : "";
 
+  const organizationGuidance = await buildOrganizationPromptContext(getConfig(), msg.user.id);
+
   // Build the prompt text
   const userContext = `Message from ${msg.user.displayName} (Telegram user ID: ${msg.user.id})`;
-  const promptText = `${userContext}${languageGuidance}\n${promptBody}`;
+  const promptText = `${userContext}${languageGuidance}${organizationGuidance}\n${promptBody}`;
 
   sessionState.currentTurnHasPhoto = Boolean(msg.photo);
   sessionState.currentTurnHasUserContext = hasMeaningfulUserContext(latestUserText);

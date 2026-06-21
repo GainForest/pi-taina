@@ -1,18 +1,16 @@
-// Create an organization account on the gainforest.id ATProto PDS
-// Creates a new ATProto account + profile, organization, and info records
+// Create a shared organization and write its profile/metadata records
 
-import { AtpAgent } from "@atproto/api";
-import crypto from "crypto";
 import type { TelegramUser } from "./publish-occurrence.js";
 import {
   createCertifiedLocation,
   type CertifiedLocationInput,
 } from "./create-certified-location.js";
-import { saveOrgAccount } from "../org-accounts.js";
+import { loadEnvConfig } from "../env.js";
+import { getAtprotoAgent, getCommunityDid } from "../atproto.js";
+import { getCgsClient, rememberSharedOrganization, setActiveOrganization, type OrganizationOption } from "../organizations.js";
+import { normalizePublishingError, type PublishingClient } from "../publishing.js";
 
 export type { TelegramUser };
-
-const PDS_ENDPOINT = "https://gainforest.id";
 
 export interface OrganizationInput {
   // Required
@@ -26,8 +24,7 @@ export interface OrganizationInput {
   country: string;                   // ISO 3166-1 alpha-2 (e.g. "DO", "BR")
   objectives: string[];              // Conservation | Research | Education | Community | Other
 
-  // Invite code for the gainforest.id PDS. Required by the server.
-  // Falls back to process.env.GAINFOREST_INVITE_CODE if omitted.
+  // Legacy standalone-org field. Shared organization creation ignores it.
   inviteCode?: string;
 
   // Optional - profile
@@ -56,7 +53,7 @@ export interface OrganizationResult {
   success: true;
   did: string;                       // Created DID
   handle: string;                    // Full handle e.g. "cabarete-sostenible.gainforest.id"
-  password: string;                  // Generated password (for credential storage)
+  password?: string;                 // Recovery password returned once for the organization account
   profileUri: string;
   orgUri: string;
   locationUri?: string;
@@ -68,19 +65,6 @@ export interface OrganizationError {
 }
 
 export type OrganizationResponse = OrganizationResult | OrganizationError;
-
-/**
- * Generate a secure random alphanumeric password of the given length.
- */
-function generatePassword(length: number = 32): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  const bytes = crypto.randomBytes(length);
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars[bytes[i] % chars.length];
-  }
-  return result;
-}
 
 /**
  * Extract the first sentence from a string (up to the first period, question mark, or exclamation).
@@ -179,15 +163,10 @@ function buildCertifiedLocationInput(
  * Create an organization on the gainforest.id ATProto PDS.
  *
  * Steps:
- * 1. Generate a secure random password
- * 2. Create account via com.atproto.server.createAccount
- * 3. Login with the new account to get an authenticated AtpAgent
- * 4. Upload avatar/banner blobs if provided
- * 5. putRecord app.certified.actor.profile/self
- * 6. putRecord app.certified.actor.organization/self
- * 7. putRecord app.gainforest.organization.info/self
- * 8. If a location was created, putRecord app.gainforest.organization.defaultSite/self
- * 9. Return { success: true, did, handle, password, profileUri, orgUri, locationUri }
+ * 1. Register a shared organization and make the signed-in bot account owner
+ * 2. Write organization profile, metadata, and optional location to that org
+ * 3. Select the new organization for the Telegram session
+ * 4. Return { success: true, did, handle, password, profileUri, orgUri, locationUri }
  */
 export async function createOrganization(input: OrganizationInput): Promise<OrganizationResponse> {
   // Basic validation
@@ -213,71 +192,74 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
     return { success: false, error: "displayName must be at least 8 characters" };
   }
 
-  // Resolve invite code from input, falling back to the env var.
-  // gainforest.id reports inviteCodeRequired=true, so we fail fast with a
-  // clear message rather than letting the PDS reject the createAccount call.
-  const inviteCode = input.inviteCode?.trim() || process.env.GAINFOREST_INVITE_CODE?.trim();
-  if (!inviteCode) {
+  // Normalize handle — lowercase, no spaces. The shared organization service
+  // turns this short handle into the full organization handle.
+  const handleSlug = input.handle.trim().toLowerCase().replace(/\s+/g, "-");
+
+  const config = loadEnvConfig();
+  if (!config.cgsServiceUrl || !config.cgsServiceDid) {
     return {
       success: false,
-      error: "Invite code is required to create an organization on gainforest.id. Provide one when creating the org, or set GAINFOREST_INVITE_CODE in .env.",
+      error: "Shared organization service is not configured. Set CGS_SERVICE_URL and CGS_SERVICE_DID before creating organizations.",
     };
   }
 
-  // Normalize handle — lowercase, no spaces
-  const handleSlug = input.handle.trim().toLowerCase().replace(/\s+/g, "-");
-  const fullHandle = `${handleSlug}.gainforest.id`;
-
-  // Step 1: Generate a secure random password
-  const password = generatePassword(32);
-
-  // Step 2: Create account on gainforest.id
   let did: string;
+  let fullHandle: string;
+  let password: string | undefined;
+  let publisher: Pick<PublishingClient, "did" | "handle" | "createRecord" | "putRecord" | "uploadBlob">;
+
   try {
-    const createAccountRes = await fetch(`${PDS_ENDPOINT}/xrpc/com.atproto.server.createAccount`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        handle: fullHandle,
-        password,
-        inviteCode,
-        ...(input.email && { email: input.email }),
-      }),
+    await getAtprotoAgent(config);
+    const ownerDid = getCommunityDid();
+    const cgs = await getCgsClient(config);
+    const registered = await cgs.registerGroup({
+      handle: handleSlug,
+      ownerDid,
+      ...(input.email && { email: input.email }),
     });
 
-    if (!createAccountRes.ok) {
-      const errorBody = await createAccountRes.text();
-      let errorMessage = `HTTP ${createAccountRes.status}`;
-      try {
-        const parsed = JSON.parse(errorBody);
-        errorMessage = parsed.message ?? parsed.error ?? errorMessage;
-      } catch {
-        // ignore JSON parse errors
-      }
-      if (createAccountRes.status === 400 && errorMessage.toLowerCase().includes("handle")) {
-        return { success: false, error: `Handle already taken: ${fullHandle}` };
-      }
-      const lowered = errorMessage.toLowerCase();
-      if (lowered.includes("invite") || lowered.includes("code")) {
-        return { success: false, error: `Invite code rejected by gainforest.id: ${errorMessage}` };
-      }
-      return { success: false, error: `Failed to create account: ${errorMessage}` };
-    }
+    did = registered.groupDid;
+    fullHandle = registered.handle;
+    password = registered.accountPassword;
 
-    const accountData = await createAccountRes.json() as { did: string };
-    did = accountData.did;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Failed to create account: ${message}` };
-  }
+    const createdAtForStore = new Date().toISOString();
+    rememberSharedOrganization({
+      handle: fullHandle,
+      did,
+      role: "owner",
+      serviceDid: config.cgsServiceDid,
+      createdAt: createdAtForStore,
+      recoveryPassword: password,
+    });
 
-  // Step 3: Login with the new account to get an authenticated AtpAgent
-  const agent = new AtpAgent({ service: PDS_ENDPOINT });
-  try {
-    await agent.login({ identifier: fullHandle, password });
+    const option: OrganizationOption = {
+      id: `group:${did}`,
+      kind: "group",
+      did,
+      handle: fullHandle,
+      displayName: input.displayName,
+      role: "owner",
+      serviceDid: config.cgsServiceDid,
+      serviceUrl: config.cgsServiceUrl,
+    };
+    setActiveOrganization(input.submittedBy.id, option);
+
+    publisher = {
+      did,
+      handle: fullHandle,
+      async createRecord(args) {
+        return cgs.createRecord({ repo: did, ...args });
+      },
+      async putRecord(args) {
+        return cgs.putRecord({ repo: did, ...args });
+      },
+      async uploadBlob(data, mimeType) {
+        return cgs.uploadBlob(did, data, mimeType);
+      },
+    };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Account created (${did}) but login failed: ${message}` };
+    return { success: false, error: `Failed to create organization: ${normalizePublishingError(err)}` };
   }
 
   const createdAt = new Date().toISOString();
@@ -290,7 +272,7 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   if (certifiedLocationInput) {
     try {
       const locationResult = await createCertifiedLocation(
-        agent,
+        publisher,
         did,
         certifiedLocationInput,
       );
@@ -315,11 +297,9 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   let avatarBlob: { ref: unknown; mimeType: string; size: number } | undefined;
   if (input.avatar) {
     try {
-      const uploadResponse = await agent.uploadBlob(input.avatar.data, {
-        encoding: input.avatar.mimeType,
-      });
+      const uploadResponse = await publisher.uploadBlob(input.avatar.data, input.avatar.mimeType);
       // Serialize through JSON to avoid CID serialization issues
-      const blobRef = JSON.parse(JSON.stringify(uploadResponse.data.blob));
+      const blobRef = JSON.parse(JSON.stringify(uploadResponse.blob));
       avatarBlob = {
         ref: blobRef.ref ?? blobRef,
         mimeType: input.avatar.mimeType,
@@ -335,10 +315,8 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   let bannerBlob: { ref: unknown; mimeType: string; size: number } | undefined;
   if (input.banner) {
     try {
-      const uploadResponse = await agent.uploadBlob(input.banner.data, {
-        encoding: input.banner.mimeType,
-      });
-      const blobRef = JSON.parse(JSON.stringify(uploadResponse.data.blob));
+      const uploadResponse = await publisher.uploadBlob(input.banner.data, input.banner.mimeType);
+      const blobRef = JSON.parse(JSON.stringify(uploadResponse.blob));
       bannerBlob = {
         ref: blobRef.ref ?? blobRef,
         mimeType: input.banner.mimeType,
@@ -387,13 +365,12 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   };
 
   try {
-    const profileResult = await agent.com.atproto.repo.putRecord({
-      repo: did,
+    const profileResult = await publisher.putRecord({
       collection: "app.certified.actor.profile",
       rkey: "self",
       record: profileRecord,
     });
-    profileUri = profileResult.data.uri;
+    profileUri = profileResult.uri;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Profile record creation failed (continuing): ${message}`);
@@ -412,13 +389,12 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   };
 
   try {
-    const orgResult = await agent.com.atproto.repo.putRecord({
-      repo: did,
+    const orgResult = await publisher.putRecord({
       collection: "app.certified.actor.organization",
       rkey: "self",
       record: orgRecord,
     });
-    orgUri = orgResult.data.uri;
+    orgUri = orgResult.uri;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`Organization record creation failed (continuing): ${message}`);
@@ -427,8 +403,7 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
 
   // Step 7: putRecord for app.gainforest.organization.info/self
   try {
-    await agent.com.atproto.repo.putRecord({
-      repo: did,
+    await publisher.putRecord({
       collection: "app.gainforest.organization.info",
       rkey: "self",
       record: buildOrgInfoRecord(input, createdAt),
@@ -442,8 +417,7 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
   // app.gainforest.organization.defaultSite/self points at an app.certified.location at-uri.
   if (locationUri) {
     try {
-      await agent.com.atproto.repo.putRecord({
-        repo: did,
+      await publisher.putRecord({
         collection: "app.gainforest.organization.defaultSite",
         rkey: "self",
         record: buildDefaultSiteRecord(locationUri, createdAt),
@@ -453,9 +427,6 @@ export async function createOrganization(input: OrganizationInput): Promise<Orga
       console.error(`Default site record creation failed (continuing): ${message}`);
     }
   }
-
-  // Step 9: Save credentials for future publishing, then return success
-  saveOrgAccount({ handle: fullHandle, did, password, createdAt });
 
   return {
     success: true,
