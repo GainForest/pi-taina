@@ -5,7 +5,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
 import { loadEnvConfig } from "../env.js";
-import { getPublishingAgent, getPublishingDid } from "../atproto.js";
+import { getPublishingClient, normalizePublishingError } from "../publishing.js";
 import { reverseGeocode } from "./geocode-location.js";
 
 const execFileAsync = promisify(execFile);
@@ -103,18 +103,16 @@ async function extractWavMeta(
 
 // List deployments via ATProto repo.listRecords — gives us full records
 // (lat/lon, deployedAt, serial) instead of having to parse CLI text.
-async function listDeploymentsViaAtproto(): Promise<DeploymentSummary[]> {
+async function listDeploymentsViaAtproto(telegramUserId?: number): Promise<DeploymentSummary[]> {
   const config = loadEnvConfig();
-  const agent = await getPublishingAgent(config);
-  const did = getPublishingDid();
+  const publisher = await getPublishingClient(config, telegramUserId);
 
-  const result = await agent.com.atproto.repo.listRecords({
-    repo: did,
+  const result = await publisher.listRecords({
     collection: DEPLOYMENT_COLLECTION,
     limit: 100,
   });
 
-  return result.data.records.map((r) => {
+  return result.records.map((r) => {
     const v = r.value as Record<string, unknown>;
     const rkey = r.uri.split("/").pop() ?? "";
     const lat = typeof v.decimalLatitude === "string" ? v.decimalLatitude : undefined;
@@ -137,9 +135,10 @@ async function listDeploymentsViaAtproto(): Promise<DeploymentSummary[]> {
 export async function patchDeploymentLocation(
   uri: string,
   location: LocationInput,
+  telegramUserId?: number,
 ): Promise<{ success: true } | { success: false; error: string }> {
   const config = loadEnvConfig();
-  const agent = await getPublishingAgent(config);
+  const publisher = await getPublishingClient(config, telegramUserId);
 
   const parts = uri.replace(/^at:\/\//, "").split("/");
   if (parts.length !== 3 || parts[1] !== DEPLOYMENT_COLLECTION) {
@@ -149,8 +148,8 @@ export async function patchDeploymentLocation(
 
   let existing: Record<string, unknown>;
   try {
-    const res = await agent.com.atproto.repo.getRecord({ repo, collection, rkey });
-    existing = res.data.value as Record<string, unknown>;
+    const res = await publisher.getRecord({ collection, rkey });
+    existing = res.value as Record<string, unknown>;
   } catch (err) {
     return { success: false, error: `Failed to fetch deployment: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -165,15 +164,14 @@ export async function patchDeploymentLocation(
   }
 
   try {
-    await agent.com.atproto.repo.putRecord({
-      repo,
+    await publisher.putRecord({
       collection,
       rkey,
       record: updated,
     });
     return { success: true };
   } catch (err) {
-    return { success: false, error: `Failed to patch deployment: ${err instanceof Error ? err.message : String(err)}` };
+    return { success: false, error: `Failed to patch deployment: ${normalizePublishingError(err)}` };
   }
 }
 
@@ -186,10 +184,8 @@ export async function createAudioMothDeployment(input: {
   location: LocationInput;
   deployedAt?: string;
   deviceLabel?: string;
+  telegramUserId?: number;
 }): Promise<{ uri: string; name: string } | { error: string }> {
-  const binary = resolveAudiogoatBinary();
-  const env = buildAudiogoatEnv();
-
   const lat = typeof input.location.decimalLatitude === "number"
     ? input.location.decimalLatitude
     : parseFloat(String(input.location.decimalLatitude));
@@ -212,26 +208,26 @@ export async function createAudioMothDeployment(input: {
     ? `AudioMoth${devicePart} at ${locality}`
     : `AudioMoth${devicePart} at ${input.location.decimalLatitude},${input.location.decimalLongitude}`;
 
-  const args = [
-    "deployment", "create",
-    "--name", name,
-    "--device", "AudioMoth",
-    "--serial", input.deploymentId,
-    "--deployed-at", input.deployedAt ?? new Date().toISOString(),
-    "--lat", String(input.location.decimalLatitude),
-    "--lon", String(input.location.decimalLongitude),
-  ];
-  if (input.location.altitude !== undefined) {
-    args.push("--altitude", String(input.location.altitude));
-  }
+  const record: Record<string, unknown> = {
+    $type: DEPLOYMENT_COLLECTION,
+    name,
+    device: "AudioMoth",
+    deviceSerialNumber: input.deploymentId,
+    deployedAt: input.deployedAt ?? new Date().toISOString(),
+    decimalLatitude: String(input.location.decimalLatitude),
+    decimalLongitude: String(input.location.decimalLongitude),
+    createdAt: new Date().toISOString(),
+    ...(input.location.altitude !== undefined && { altitude: String(input.location.altitude) }),
+    ...(locality && { locality }),
+  };
 
   try {
-    const { stdout } = await execFileAsync(binary, args, { env, timeout: 30_000 });
-    const match = stdout.match(/at:\/\/[^\s]+/);
-    if (!match) return { error: `audiogoat returned no AT-URI; stdout: ${stdout.slice(0, 200)}` };
-    return { uri: match[0], name };
+    const config = loadEnvConfig();
+    const publisher = await getPublishingClient(config, input.telegramUserId);
+    const result = await publisher.createRecord({ collection: DEPLOYMENT_COLLECTION, record });
+    return { uri: result.uri, name };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
+    return { error: normalizePublishingError(err) };
   }
 }
 
@@ -242,6 +238,7 @@ async function autoCreateDeployment(
   _env: NodeJS.ProcessEnv,
   folder: string,
   location: LocationInput,
+  telegramUserId?: number,
 ): Promise<{ uri: string; name: string } | null> {
   const meta = await extractWavMeta(folder);
   const result = await createAudioMothDeployment({
@@ -249,6 +246,7 @@ async function autoCreateDeployment(
     deployedAt: meta?.recordedAt,
     deviceLabel: meta?.deviceId && meta.deviceId !== "unknown" ? meta.deviceId : undefined,
     location,
+    telegramUserId,
   });
   return "uri" in result ? result : null;
 }
@@ -294,6 +292,7 @@ export async function uploadAudioMothSD(
   folder: string,
   deploymentUri?: string,
   location?: LocationInput,
+  telegramUserId?: number,
 ): Promise<UploadAudioMothResult> {
   const binary = resolveAudiogoatBinary();
   const env = buildAudiogoatEnv();
@@ -305,7 +304,7 @@ export async function uploadAudioMothSD(
   if (deploymentUri) {
     let summaries: DeploymentSummary[];
     try {
-      summaries = await listDeploymentsViaAtproto();
+      summaries = await listDeploymentsViaAtproto(telegramUserId);
     } catch (err) {
       return { success: false, code: "error", error: `Failed to list deployments: ${err instanceof Error ? err.message : String(err)}` };
     }
@@ -325,7 +324,7 @@ export async function uploadAudioMothSD(
           suggestion: `Deployment "${match.name}" has no GPS coordinates yet. Ask the user where the AudioMoth is placed (Telegram location, place name, or coordinates), then call upload_audiomoth_sd again with the same deploymentUri plus location.`,
         };
       }
-      const patch = await patchDeploymentLocation(match.uri, location);
+      const patch = await patchDeploymentLocation(match.uri, location, telegramUserId);
       if (!patch.success) {
         return { success: false, code: "error", error: patch.error };
       }
@@ -337,7 +336,7 @@ export async function uploadAudioMothSD(
   if (!resolvedDeployment) {
     let deployments: DeploymentSummary[];
     try {
-      deployments = await listDeploymentsViaAtproto();
+      deployments = await listDeploymentsViaAtproto(telegramUserId);
     } catch (err) {
       return { success: false, code: "error", error: `Failed to list deployments: ${err instanceof Error ? err.message : String(err)}` };
     }
@@ -363,7 +362,7 @@ export async function uploadAudioMothSD(
               suggestion: `Deployment "${match.name}" matches this SD card by serial but has no GPS coordinates yet. Ask the user where the AudioMoth is placed, then call upload_audiomoth_sd again with the same deploymentUri plus location.`,
             };
           }
-          const patch = await patchDeploymentLocation(match.uri, location);
+          const patch = await patchDeploymentLocation(match.uri, location, telegramUserId);
           if (!patch.success) {
             return { success: false, code: "error", error: patch.error };
           }
@@ -386,7 +385,7 @@ export async function uploadAudioMothSD(
           suggestion: "No AudioMoth deployment exists yet. Ask the user where this AudioMoth is placed (Telegram location, place name, or coordinates), then call upload_audiomoth_sd again with location.",
         };
       }
-      const created = await autoCreateDeployment(binary, env, folder, location);
+      const created = await autoCreateDeployment(binary, env, folder, location, telegramUserId);
       if (!created) {
         return {
           success: false,
@@ -408,7 +407,7 @@ export async function uploadAudioMothSD(
             suggestion: `Deployment "${only.name}" has no GPS coordinates yet. Ask the user where the AudioMoth is placed, then call upload_audiomoth_sd again with the same deploymentUri plus location.`,
           };
         }
-        const patch = await patchDeploymentLocation(only.uri, location);
+        const patch = await patchDeploymentLocation(only.uri, location, telegramUserId);
         if (!patch.success) {
           return { success: false, code: "error", error: patch.error };
         }

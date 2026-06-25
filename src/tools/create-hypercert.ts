@@ -1,9 +1,9 @@
 // Publish hypercert activity records to ATProto (org.hypercerts.claim.activity)
 // Used to document conservation or community impact work as permanent records
 
-import { getPublishingAgent, getPublishingDid } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
 import { getOrgContext } from "../hyperindex.js";
+import { getPublishingClient, normalizePublishingError, type PublishingClient } from "../publishing.js";
 import type { TelegramUser } from "./publish-occurrence.js";
 
 export type { TelegramUser };
@@ -57,28 +57,25 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
     return { success: false, error: "shortDescription is required" };
   }
 
-  // Get ATProto agent — return error if not configured
-  let agent;
+  // Get publishing client — return error if not configured or no organization is selected
+  let publisher: PublishingClient;
   try {
     const config = loadEnvConfig();
-    agent = await getPublishingAgent(config);
+    publisher = await getPublishingClient(config, input.submittedBy.id);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `ATProto not configured: ${message}` };
+    return { success: false, error: `ATProto not configured: ${normalizePublishingError(err)}` };
   }
 
-  const did = getPublishingDid();
+  const did = publisher.did;
   const createdAt = new Date().toISOString();
 
   // Upload image blob if provided
   let imageBlob: { ref: unknown; mimeType: string; size: number } | undefined;
   if (input.image) {
     try {
-      const uploadResponse = await agent.uploadBlob(input.image.data, {
-        encoding: input.image.mimeType,
-      });
+      const uploadResponse = await publisher.uploadBlob(input.image.data, input.image.mimeType);
       // Serialize through JSON to avoid CID serialization issues (same pattern as publish-occurrence.ts)
-      const blobRef = JSON.parse(JSON.stringify(uploadResponse.data.blob));
+      const blobRef = JSON.parse(JSON.stringify(uploadResponse.blob));
       imageBlob = {
         ref: blobRef.ref ?? blobRef,
         mimeType: input.image.mimeType,
@@ -95,8 +92,7 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
   const hasGps = input.decimalLatitude !== undefined && input.decimalLongitude !== undefined;
   if (hasGps) {
     try {
-      const locationResult = await agent.com.atproto.repo.createRecord({
-        repo: did,
+      const locationResult = await publisher.createRecord({
         collection: 'app.certified.location',
         record: {
           $type: 'app.certified.location',
@@ -107,8 +103,8 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
         },
       });
       locationRef = {
-        uri: locationResult.data.uri,
-        cid: locationResult.data.cid,
+        uri: locationResult.uri,
+        cid: locationResult.cid,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -162,11 +158,11 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
 
   // Contributor 2: the community org (if available)
   const org = getOrgContext();
-  if (org?.displayName) {
+  if (publisher.displayName ?? org?.displayName) {
     contributors.push({
       contributorIdentity: {
         $type: 'org.hypercerts.claim.activity#contributorIdentity',
-        identity: did,  // the community DID
+        identity: did,  // the organization DID
       },
       contributionDetails: {
         $type: 'org.hypercerts.claim.activity#contributorRole',
@@ -181,24 +177,23 @@ export async function createHypercert(input: HypercertInput): Promise<HypercertR
   // Create the record in collection org.hypercerts.claim.activity
   let createResult;
   try {
-    createResult = await agent.com.atproto.repo.createRecord({
-      repo: did,
+    createResult = await publisher.createRecord({
       collection: 'org.hypercerts.claim.activity',
       record,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Failed to create hypercert: ${message}` };
+    return { success: false, error: `Failed to create hypercert: ${normalizePublishingError(err)}` };
   }
 
   // Build hyperscanUrl — extract rkey from the URI
-  const rkey = createResult.data.uri.split('/').pop() ?? '';
+  const rkey = createResult.uri.split('/').pop() ?? '';
   const hyperscanUrl = `https://www.hyperscan.dev/data?did=${encodeURIComponent(did)}&collection=org.hypercerts.claim.activity&rkey=${rkey}`;
 
   return {
     success: true,
-    uri: createResult.data.uri,
-    cid: createResult.data.cid,
+    uri: createResult.uri,
+    cid: createResult.cid,
     title: input.title,
     hyperscanUrl,
     contributorCount: contributors.length,

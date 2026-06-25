@@ -1,8 +1,8 @@
 // Publish Darwin Core MeasurementOrFact records to the community ATProto PDS
 // Links to an occurrence via occurrenceRef (AT-URI)
 
-import { getPublishingAgent, getPublishingDid } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
+import { getPublishingClient, normalizePublishingError, type PublishingClient } from "../publishing.js";
 import type { TelegramUser } from "./publish-occurrence.js";
 
 export interface MeasurementEntry {
@@ -121,16 +121,15 @@ export async function publishMeasurement(input: PublishMeasurementInput): Promis
     return { success: false, error: "occurrenceRef is required" };
   }
 
-  let agent;
+  let publisher: PublishingClient;
   try {
     const config = loadEnvConfig();
-    agent = await getPublishingAgent(config);
+    publisher = await getPublishingClient(config, input.submittedBy.id);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `ATProto agent error: ${message}` };
+    return { success: false, error: `ATProto agent error: ${normalizePublishingError(err)}` };
   }
 
-  const did = getPublishingDid();
+  const did = publisher.did;
   const createdAt = new Date().toISOString();
   const { id, username, displayName } = input.submittedBy;
   const attribution = username
@@ -178,17 +177,16 @@ export async function publishMeasurement(input: PublishMeasurementInput): Promis
 
   let createResult;
   try {
-    createResult = await agent.com.atproto.repo.createRecord({
-      repo: did,
+    createResult = await publisher.createRecord({
       collection: "app.gainforest.dwc.measurement",
       record,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Failed to publish measurement: ${message}` };
+    return { success: false, error: `Failed to publish measurement: ${normalizePublishingError(err)}` };
   }
 
-  const atUri = createResult.data.uri;
+  const atUri = createResult.uri;
   const uriParts = atUri.slice("at://".length).split("/");
   const hyperscanUrl = uriParts.length >= 3
     ? `https://www.hyperscan.dev/data?did=${encodeURIComponent(uriParts[0])}&collection=${encodeURIComponent(uriParts[1])}&rkey=${encodeURIComponent(uriParts[2])}`
@@ -197,7 +195,7 @@ export async function publishMeasurement(input: PublishMeasurementInput): Promis
   return {
     success: true as const,
     uri: atUri,
-    cid: createResult.data.cid,
+    cid: createResult.cid,
     measurementType: measurementTypeName,
     hyperscanUrl,
   };

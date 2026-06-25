@@ -2,9 +2,9 @@
 // Ported from taina-v3-2, simplified for the community account model
 
 import type { AtpAgent } from "@atproto/api";
-import { getPublishingAgent, getPublishingDid, getPublishingHandle } from "../atproto.js";
 import { loadEnvConfig } from "../env.js";
 import { getOrgContext } from "../hyperindex.js";
+import { getPublishingClient, normalizePublishingError, type PublishingClient } from "../publishing.js";
 
 export interface PublishAgentOverride {
   agent: AtpAgent;
@@ -111,24 +111,36 @@ export async function publishOccurrence(
     };
   }
 
-  let agent: AtpAgent;
-  let did: string;
-  let communityHandle: string;
+  let publisher: Pick<PublishingClient, "did" | "handle" | "displayName" | "createRecord" | "uploadBlob">;
   if (override) {
-    agent = override.agent;
-    did = override.did;
-    communityHandle = override.handle;
+    publisher = {
+      did: override.did,
+      handle: override.handle,
+      async uploadBlob(data, mimeType) {
+        const result = await override.agent.uploadBlob(data, { encoding: mimeType });
+        return { blob: result.data.blob };
+      },
+      async createRecord(args) {
+        const result = await override.agent.com.atproto.repo.createRecord({
+          repo: override.did,
+          collection: args.collection,
+          record: args.record,
+          rkey: args.rkey,
+        });
+        return { uri: result.data.uri, cid: result.data.cid };
+      },
+    };
   } else {
     try {
       const config = loadEnvConfig();
-      agent = await getPublishingAgent(config);
+      publisher = await getPublishingClient(config, input.submittedBy.id);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { success: false, error: `ATProto agent error: ${message}` };
+      return { success: false, error: `ATProto agent error: ${normalizePublishingError(err)}` };
     }
-    did = getPublishingDid();
-    communityHandle = getPublishingHandle();
   }
+
+  const did = publisher.did;
+  const communityHandle = publisher.handle;
 
   // Build recordedBy string — include all three Telegram user identifiers
   // Store Telegram info in occurrenceRemarks for attribution, use handle for recordedBy
@@ -161,10 +173,11 @@ export async function publishOccurrence(
 
   // Org context — institutionCode, rightsHolder, datasetName
   const org = getOrgContext();
-  if (org?.displayName) {
-    record.institutionCode = org.displayName;
-    record.rightsHolder = org.displayName;
-    record.datasetName = org.displayName + " Community Observations";
+  const organizationName = publisher.displayName ?? org?.displayName;
+  if (organizationName) {
+    record.institutionCode = organizationName;
+    record.rightsHolder = organizationName;
+    record.datasetName = organizationName + " Community Observations";
   }
   if (!record.datasetName) {
     record.datasetName = "Pi-Tainá Community Observations";
@@ -235,12 +248,10 @@ export async function publishOccurrence(
     const blobRefs: unknown[] = [];
     for (const image of imagesToUpload) {
       try {
-        const uploadResponse = await agent.uploadBlob(image.data, {
-          encoding: image.mimeType,
-        });
+        const uploadResponse = await publisher.uploadBlob(image.data, image.mimeType);
 
         // Serialize through JSON to avoid CID serialization issues (same pattern as taina-v3-2)
-        const blobRef = JSON.parse(JSON.stringify(uploadResponse.data.blob));
+        const blobRef = JSON.parse(JSON.stringify(uploadResponse.blob));
         blobRefs.push(blobRef);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -266,18 +277,17 @@ export async function publishOccurrence(
   // Publish the record
   let createResult;
   try {
-    createResult = await agent.com.atproto.repo.createRecord({
-      repo: did,
+    createResult = await publisher.createRecord({
       collection: "app.gainforest.dwc.occurrence",
       record,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { success: false, error: `Failed to publish occurrence: ${message}` };
+    return { success: false, error: `Failed to publish occurrence: ${normalizePublishingError(err)}` };
   }
 
   // Build Hyperscan URL from the AT URI
-  const atUri = createResult.data.uri;
+  const atUri = createResult.uri;
   const uriParts = atUri.slice("at://".length).split("/");
   const hyperscanUrl = uriParts.length >= 3
     ? `https://www.hyperscan.dev/data?did=${encodeURIComponent(uriParts[0])}&collection=${encodeURIComponent(uriParts[1])}&rkey=${encodeURIComponent(uriParts[2])}`
@@ -294,8 +304,8 @@ export async function publishOccurrence(
 
   return {
     success: true as const,
-    uri: createResult.data.uri,
-    cid: createResult.data.cid,
+    uri: createResult.uri,
+    cid: createResult.cid,
     occurrenceID: record.occurrenceID as string,
     scientificName: record.scientificName as string,
     vernacularName: record.vernacularName as string | undefined,

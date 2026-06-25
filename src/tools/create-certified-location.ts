@@ -1,4 +1,5 @@
 import type { AtpAgent } from "@atproto/api";
+import type { PublishingClient } from "../publishing.js";
 
 export interface CertifiedLocationPointInput {
   kind: "point";
@@ -54,8 +55,31 @@ function closePolygonRing(points: Array<{ lng: number; lat: number }>) {
   return ring;
 }
 
+type CertifiedLocationWriter = AtpAgent | Pick<PublishingClient, "createRecord">;
+
+function isPublishingWriter(writer: CertifiedLocationWriter): writer is Pick<PublishingClient, "createRecord"> {
+  return "createRecord" in writer && typeof writer.createRecord === "function";
+}
+
+async function writeLocationRecord(
+  writer: CertifiedLocationWriter,
+  orgDid: string,
+  record: Record<string, unknown>,
+): Promise<{ uri: string; cid: string }> {
+  if (isPublishingWriter(writer)) {
+    return writer.createRecord({ collection: "app.certified.location", record });
+  }
+
+  const result = await writer.com.atproto.repo.createRecord({
+    repo: orgDid,
+    collection: "app.certified.location",
+    record,
+  });
+  return { uri: result.data.uri, cid: result.data.cid };
+}
+
 export async function createCertifiedLocation(
-  agent: AtpAgent,
+  writer: CertifiedLocationWriter,
   orgDid: string,
   input: CertifiedLocationInput,
 ): Promise<CertifiedLocationResponse> {
@@ -100,16 +124,12 @@ export async function createCertifiedLocation(
       };
     }
 
-    const createResult = await agent.com.atproto.repo.createRecord({
-      repo: orgDid,
-      collection: "app.certified.location",
-      record,
-    });
+    const createResult = await writeLocationRecord(writer, orgDid, record);
 
     return {
       success: true,
-      uri: createResult.data.uri,
-      cid: createResult.data.cid,
+      uri: createResult.uri,
+      cid: createResult.cid,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
