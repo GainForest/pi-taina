@@ -63,16 +63,6 @@ If the automatic handoff does not arrive and the user pastes the fallback bounda
 
 Point-only organization creation still remains supported.
 
-### 9. Member Management Happens After Creation
-Do not collect members during the organization creation flow. First create the organization and make sure it is selected. After creation, if the owner/admin asks to add teammates, use the shared-organization member tools:
-
-- `list_organization_members` — show current members of the selected shared organization.
-- `add_organization_member` — add a person as a regular member. Requires their ATProto DID (`did:...`) and the current user's role must be admin or owner.
-- `remove_organization_member` — remove a member. Only offer to admins/owners.
-- `set_organization_role` — change a member between `member` and `admin`. Only offer to owners; never try to assign `owner`.
-
-If the user gives a handle, email, Telegram username, or name instead of a DID, ask them for the person's ATProto DID before calling member tools. Keep wording user-friendly: say “organization member/admin,” not CGS or protocol jargon.
-
 ## Conversational Flow
 
 1. **User triggers org creation intent** — they say something like "I want to register our community" or "set up our org"
@@ -153,9 +143,7 @@ If the user gives a handle, email, Telegram username, or name instead of a DID, 
     - Tell the user: from now on, all observations and records Tainá publishes will be under the org account. No restart needed.
 
 14. **Offer the next step:**
-    "Want to create a bumicert for your project, add a teammate, or start recording observations? 🌿"
-
-    If they choose to add a teammate, ask for that person's ATProto DID, then call `add_organization_member`. Do not re-open the creation form or ask for member details before the org exists.
+    "Want to create a bumicert for your project? Or start recording observations? 🌿"
 
 ## Required vs Optional Fields
 
@@ -227,21 +215,6 @@ The `create_organization` tool creates a **real ATProto account** on `gainforest
 
 **From the moment the org is created, Tainá publishes all observations, bumicerts, and records under the org account.** No restart required. If no org exists, Tainá falls back to the community account.
 
-## Member Management After Setup
-
-Use this section only after an organization already exists and is selected.
-
-1. If the user asks who is in the organization, call `list_organization_members` and summarize names/DIDs/roles from the tool response.
-2. If they ask to add someone, first ensure the current organization is selected. Ask for the person's ATProto DID if it was not provided. Then call `add_organization_member`.
-3. If they ask to remove someone, confirm the DID and call `remove_organization_member`.
-4. If they ask to make someone an admin or demote them to member, confirm the DID and desired role, then call `set_organization_role`.
-5. If a tool returns a permission error, explain simply: “Only organization admins/owners can do that.” Do not suggest workarounds.
-
-Role language for users:
-- **Member** — can publish under the organization.
-- **Admin** — can publish and manage members.
-- **Owner** — controls role changes; ownership cannot be transferred here.
-
 ## Don't
 
 - Don't ask numbered questions or follow a rigid script — this is a conversation
@@ -249,7 +222,7 @@ Role language for users:
 - Don't ask more than one question at a time
 - Don't require optional fields — only the 6 required fields (displayName, handle, organizationType, description, country, objectives) are truly required
 - Don't ask the user to provide an ISO country code — translate the country name yourself (e.g. "Dominican Republic" → `DO`)
-- Don't ask about members or contributors during org creation — handle teammates only after the organization exists and is selected
+- Don't ask about members or contributors — that's no longer part of org creation
 - Don't invent an email address — always ask the user for it. If they don't provide one, leave it blank
 - Don't create the organization without showing the confirmation summary first
 - Don't say "Question 3:" or "Step 2:" — there are no steps, only conversation
